@@ -1,12 +1,12 @@
 # wYEC on Ethereum: from the deployed WRY to a bridge token
 
-Status: design note, 2026-10-05, prepared in `wt/wry` against `docs/plans/yellowback-upgrade-plan.md`
-revision 2 (§4.3, §10, §11, O-4, O-9). Nothing here is committed to a component repo yet; the
-`wyec/` repository (plan P5) will be created from it.
+Status: design note, 2026-10-05, prepared against the workspace `docs/plans/yellowback-upgrade-plan.md`
+revision 2 (§4.3, §10, §11, O-4, O-9). This repository is the plan's `wyec/` component (P5); the
+drafts are not yet reviewed or audited.
 
 ## 1. What is deployed today, and why it cannot be reused
 
-`contracts/Wry.sol` in this repository is byte-for-byte the source Sourcify matches to
+`contracts/Wry.sol` in https://github.com/boyfromcave/wry is byte-for-byte the source Sourcify matches to
 `0x1dff69d892d7a503088522b830eadcba9867f6bd` (exact creation and runtime match, verified 2024-08-08,
 solc 0.6.12, no optimizer, not a proxy). It is OpenZeppelin 3.x `ERC20` plus a constructor:
 
@@ -168,13 +168,13 @@ daemon checks `totalSupply ≤ YEC in live WYEC vaults` every block as a livenes
 | E-6 | Mint-side `RateLimiter` | defer to the audit |
 | E-7 | `ERC20Capped` at 21e6 | include |
 
-## 7. Files in this worktree
+## 7. Files in this repository
 
-- `contracts/Wry.sol`: the 2021 contract, untouched (the deployed reference).
-- `contracts/v2/WrappedYcash.sol`: the token draft (§4).
-- `contracts/v2/WyecBridge.sol`: the bridge draft (§4.1–4.3).
-- `contracts/v2/README.md`: how to compile the drafts with `solc` from npm, pending a Foundry
-  setup in the real `wyec/` repo.
+- The 2021 WRY contract stays in its own repository (boyfromcave/wry) as the deployed reference.
+- `contracts/WrappedYcash.sol`: the token draft (§4).
+- `contracts/WyecBridge.sol`: the bridge draft (§4.1–4.3).
+- `contracts/README.md`: how to compile the drafts with `solc` from npm, pending a Foundry
+  setup.
 
 ## 8. Deployment order (found by the compile check)
 
@@ -186,4 +186,4 @@ broadcasting. No post-deploy setter is needed, so neither contract has an admin 
 it somewhere else.
 
 Compile check, 2026-10-05: both drafts build with solc 0.8.37 and OpenZeppelin 5.6.1 (optimizer
-on, 200 runs); deployed sizes 4,683 bytes (token) and 5,361 bytes (bridge). `contracts/v2/compile.js`.
+on, 200 runs); deployed sizes 4,683 bytes (token) and 5,361 bytes (bridge). `contracts/compile.js`.
