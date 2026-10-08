@@ -208,7 +208,7 @@ contract OptimisticMintTest is BridgeTestBase {
         uint256 id = propose(guardianKeys[0], LOCK, AMOUNT, alice);
         vm.warp(block.timestamp + WINDOW - 1);
         challenge(guardianKeys[1], LOCK, id);
-        id = propose(guardianKeys[0], LOCK, AMOUNT, alice);
+        id = propose(guardianKeys[1], LOCK, AMOUNT, alice); // guardian 0 is now vetoed for LOCK
         vm.warp(block.timestamp + 10 * WINDOW);
         challenge(guardianKeys[2], LOCK, id);
         assertEq(proposal(LOCK).id, 0);
@@ -220,7 +220,7 @@ contract OptimisticMintTest is BridgeTestBase {
         bytes memory oldSig = sign(guardianKeys[2], challengeDigest(address(bridge), LOCK, id1));
         bridge.challengeMint(LOCK, id1, oldSig);
 
-        uint256 id2 = propose(guardianKeys[0], LOCK, AMOUNT, alice);
+        uint256 id2 = propose(guardianKeys[1], LOCK, AMOUNT, alice);
         assertEq(id2, id1 + 1);
         // Replayed as-is: names a proposal that no longer exists.
         vm.expectRevert(abi.encodeWithSelector(WyecBridge.NoProposal.selector, LOCK, id1));
@@ -233,6 +233,32 @@ contract OptimisticMintTest is BridgeTestBase {
         vm.warp(block.timestamp + WINDOW);
         bridge.executeMint(LOCK);
         assertEq(token.balanceOf(alice), AMOUNT);
+    }
+
+    /// A challenged proposer cannot re-propose the same lock: its Mint signature is public after
+    /// the first proposal, so without the veto anyone could replay it after every challenge.
+    function test_Challenge_VetoesProposerForThatLock() public {
+        bytes memory sig0 = sign(guardianKeys[0], mintDigest(address(bridge), LOCK, AMOUNT, alice));
+        uint256 id = bridge.proposeMint(LOCK, AMOUNT, alice, sig0);
+        challenge(guardianKeys[1], LOCK, id);
+        assertTrue(bridge.vetoed(LOCK, guardianAddrs[0]));
+
+        // Replaying the public signature, by anyone, is refused.
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.ProposerVetoed.selector, LOCK, guardianAddrs[0]));
+        bridge.proposeMint(LOCK, AMOUNT, alice, sig0);
+        // So is a fresh signature by the same guardian, for any amount or recipient.
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.ProposerVetoed.selector, LOCK, guardianAddrs[0]));
+        propose(guardianKeys[0], LOCK, AMOUNT + 1, bob);
+
+        // The veto is per lock: guardian 0 proposes other locks freely.
+        propose(guardianKeys[0], keccak256("other-lock"), AMOUNT, alice);
+        // Another guardian can still mint this lock optimistically, and the threshold path works too.
+        uint256 id2 = propose(guardianKeys[1], LOCK, AMOUNT, alice);
+        vm.warp(block.timestamp + WINDOW);
+        bridge.executeMint(LOCK);
+        assertEq(token.balanceOf(alice), AMOUNT);
+        assertTrue(id2 > id);
     }
 
     function test_Challenge_NonGuardianRejected() public {
@@ -351,7 +377,7 @@ contract OptimisticMintTest is BridgeTestBase {
 
         // A proposal that ripens during a pause executes once unpaused.
         bridge.setPaused(false, signedSetPaused(false));
-        propose(guardianKeys[0], LOCK, AMOUNT, alice);
+        propose(guardianKeys[2], LOCK, AMOUNT, alice); // guardian 0 is vetoed for LOCK
         bridge.setPaused(true, signedSetPaused(true));
         vm.warp(block.timestamp + WINDOW);
         bridge.setPaused(false, signedSetPaused(false));
@@ -420,11 +446,14 @@ contract OptimisticMintTest is BridgeTestBase {
     function testFuzz_ProposalIdsIncrease(uint8 n) public {
         n = uint8(bound(n, 1, 20));
         for (uint256 i = 0; i < n; i++) {
+            // Three locks, each proposed by every guardian in turn (a challenged proposer is
+            // vetoed for its lock, so the proposer for lock j at round r is guardian (j + r) % 3).
             bytes32 lock = keccak256(abi.encode(i % 3));
             uint256 live = bridge.getProposal(lock).id;
             if (live != 0) challenge(guardianKeys[(i + 2) % 3], lock, live);
             uint256 before = bridge.proposalCount();
-            uint256 id = propose(guardianKeys[i % 3], lock, AMOUNT, alice);
+            if (i >= 9) lock = keccak256(abi.encode("fresh", i)); // every guardian is vetoed by now
+            uint256 id = propose(guardianKeys[(i % 3 + i / 3) % 3], lock, AMOUNT, alice);
             assertEq(id, before + 1);
             if (i % 2 == 0) challenge(guardianKeys[(i + 1) % 3], lock, id);
         }

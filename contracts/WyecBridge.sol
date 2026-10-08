@@ -102,6 +102,11 @@ contract WyecBridge is EIP712, Pausable {
     mapping(bytes32 lockId => Proposal) public proposals;
     /// @notice Number of proposals ever opened; the last proposal id issued.
     uint96 public proposalCount;
+    /// @notice A guardian whose proposal for a lockId was challenged may not propose that lockId
+    ///         again. Its Mint signature is public once proposed; without this, anyone could replay
+    ///         it after every challenge, so the watchers would have to win every window until the
+    ///         guardian is rotated out. Other guardians (or the threshold path) can still mint it.
+    mapping(bytes32 lockId => mapping(address proposer => bool)) public vetoed;
 
     /// @notice Most wYEC base units both mint paths together may mint per window; 0 = no limit.
     uint256 public mintCap;
@@ -152,6 +157,8 @@ contract WyecBridge is EIP712, Pausable {
     error ZeroRecipient();
     /// @notice A live (non-void) proposal already exists for the lockId.
     error ProposalPending(bytes32 lockId, uint256 proposalId);
+    /// @notice The signer's earlier proposal for this lockId was challenged (see `vetoed`).
+    error ProposerVetoed(bytes32 lockId, address proposer);
     /// @notice No proposal for the lockId (`executeMint`), or not the one named (`challengeMint`).
     error NoProposal(bytes32 lockId, uint256 proposalId);
     /// @notice `executeMint` before the proposal's `eta`.
@@ -214,6 +221,7 @@ contract WyecBridge is EIP712, Pausable {
         if (p.id != 0 && isGuardian[p.proposer]) revert ProposalPending(lockId, p.id);
         address signer = ECDSA.recover(mintDigest(lockId, amount, to), sig);
         if (!isGuardian[signer]) revert NotGuardian(signer);
+        if (vetoed[lockId][signer]) revert ProposerVetoed(lockId, signer);
 
         uint96 id = ++proposalCount;
         uint64 eta = uint64(block.timestamp) + challengeWindow;
@@ -224,7 +232,8 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @notice Deletes proposal `proposalId` for `lockId` on ANY one current guardian's signature.
     ///         Callable by anyone, also while paused. The lockId is not consumed: a correct mint
-    ///         can be proposed again. A guardian may challenge its own proposal.
+    ///         can be proposed again, by another guardian: the challenged proposer is barred from
+    ///         that lockId (`vetoed`). A guardian may challenge its own proposal.
     /// @param sig a guardian's signature over EIP-712 `Challenge(lockId, proposalId)`; binding the
     ///        proposal id means a challenge cannot be replayed against a later re-proposal
     function challengeMint(bytes32 lockId, uint256 proposalId, bytes calldata sig) external {
@@ -232,6 +241,7 @@ contract WyecBridge is EIP712, Pausable {
         if (id == 0 || id != proposalId) revert NoProposal(lockId, proposalId);
         address signer = ECDSA.recover(challengeDigest(lockId, proposalId), sig);
         if (!isGuardian[signer]) revert NotGuardian(signer);
+        vetoed[lockId][proposals[lockId].proposer] = true;
         delete proposals[lockId];
         emit MintChallenged(lockId, proposalId, signer);
     }

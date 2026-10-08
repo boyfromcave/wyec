@@ -211,7 +211,10 @@ executeMint(bytes32 lockId)                                                     
 - **Proposal ids** are unique and increasing (`proposalCount`, `uint96`, packed with the
   proposer). A challenge names the id, so a challenge signed against one proposal can never
   delete a later re-proposal of the same lock (a correct mint is not blockable by replaying an
-  old veto). A guardian may challenge its own proposal (to withdraw a mistake).
+  old veto). A challenge also bars the challenged proposer from that lockId (`vetoed`), since its
+  Mint signature is public after the first proposal and could otherwise be replayed by anyone
+  after every challenge. A guardian may challenge its own proposal (to withdraw a mistake), and is
+  then barred from re-proposing that lock itself.
 - **Rotation.** A proposal is valid only while its proposer is a guardian; this is checked at
   execute. A proposer rotated out (for instance after a slash on Ycash) leaves a *void* proposal:
   `executeMint` reverts `ProposerNotGuardian`, and any current guardian's `proposeMint` replaces
@@ -233,6 +236,7 @@ executeMint(bytes32 lockId)                                                     
 | Fraudulent proposal: no lock behind `lockId`, wrong amount or recipient | n/a | challenged; the lock (if real) is re-proposed correctly or minted by threshold |
 | Proposal squatting: a bad proposal placed first on a real `lockId` | n/a | blocks that lock only until challenged (one transaction); threshold `mint` overrides at once |
 | Replaying an old challenge to block a correct re-proposal | n/a | `proposalId` binding |
+| Replaying a challenged proposer's public Mint signature after every challenge (watchers would have to win every window until the guardian is rotated out) | n/a | `vetoed[lockId][proposer]`: a challenged proposer may not propose that lockId again; other guardians and the threshold path still can |
 | Compromised guardian removed by rotation with proposals pending | n/a | its proposals are void at execute |
 | Nobody watching during the window | n/a | the rate limit bounds the loss per window (§4.5.4) |
 | Front-running a proposal or an execute | n/a | harmless: `(lockId, amount, to)` is signed; the front-runner pays the gas |
@@ -271,7 +275,7 @@ total: a quorum able to set the cap could raise it anyway. The total is not coun
 Measured on anvil (solc 0.8.37, 200 runs, transaction gas including the 21,000 base):
 `proposeMint` 128,346 (first proposal ever; a later one about 111,000), `challengeMint` 38,118
 (storage refund included), `executeMint` 134,406 (first mint ever, rate limit on; about 107,000
-typical). Deployed size 9,217 bytes (was 5,361); the token is unchanged at 4,683.
+typical). Deployed size 9,446 bytes (was 5,361); the token is unchanged at 4,683.
 
 ## 5. What is deliberately not in the contract
 
@@ -328,5 +332,5 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=100000000
 3. Each guardian reads back `guardians`, `threshold`, `challengeWindow`, `mintCap`, `capWindow`,
    `token.bridge()` and `bridge.token()` before signing anything for the deployment.
 
-Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 9,217 bytes deployed (5,361
+Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 9,446 bytes deployed (5,361
 before §4.5), `WrappedYcash` 4,683 bytes; the EIP-170 limit is 24,576.
