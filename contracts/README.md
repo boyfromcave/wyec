@@ -1,11 +1,8 @@
 # wYEC contracts (upgrade plan P5)
 
-`WrappedYcash.sol` is the token, `WyecBridge.sol` the policy. Design and rationale:
-`../docs/wyec-contract-design.md`. Compile check (OpenZeppelin 5.7.x, solc 0.8.24+):
+`WrappedYcash.sol` is the token, `WyecBridge.sol` the policy (threshold mint, optimistic mint,
+rate limit, burn, admin). Design and rationale: `../docs/wyec-contract-design.md`.
 
-```sh
-npm init -y >/dev/null && npm i --no-audit --no-fund solc@0.8 @openzeppelin/contracts@5
-node compile.js .   # compiled clean 2026-10-05: solc 0.8.37, @openzeppelin/contracts 5.6.1
-```
-
-A Foundry setup with tests replaces this; it is only enough to prove the drafts build.
+They are built and tested with Foundry from the repository root (`../foundry.toml`); the tests
+are in `../test/`, the deployment script in `../script/Deploy.s.sol`. See `../README.md` for the
+commands.
