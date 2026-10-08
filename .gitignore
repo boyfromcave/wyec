@@ -1,2 +1,8 @@
-node_modules/
-package*.json
+# npm-installed dependencies (package.json / package-lock.json are committed)
+/node_modules/
+# Foundry outputs
+/out/
+/cache/
+/broadcast/*/31337/
+/deployments/31337.json
+/deployments/.test-*.json

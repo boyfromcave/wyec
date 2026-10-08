@@ -1,0 +1,37 @@
+# wYEC's Foundry project (Hawkeye plan CR-W2; docs/wyec-contract-design.md §8).
+#
+# Dependencies come from npm, exact-pinned in package.json / package-lock.json:
+#     npm ci --ignore-scripts
+#
+# Compiler: native solc 0.8.37, which Foundry downloads (CI: foundry-toolchain, forge v1.7.1).
+# Opt-in for restricted environments where the native solc download is blocked: the solc-js
+# shim over the `solc` npm package pinned in package.json - same version, same bytecode:
+#
+#     FOUNDRY_SOLC=./tools/solc FOUNDRY_OFFLINE=true forge test
+#
+[profile.default]
+src = "contracts"
+test = "test"
+script = "script"
+out = "out"
+libs = ["node_modules"]
+remappings = [
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+    "forge-std/=node_modules/forge-std/src/",
+]
+solc_version = "0.8.37"
+optimizer = true
+optimizer_runs = 200
+evm_version = "prague"
+bytecode_hash = "ipfs"
+# OpenZeppelin 5.6.1 names locals `error`, which solc 0.8.37 warns about.
+ignored_warnings_from = ["node_modules"]
+# Deploy.s.sol writes deployments/<chainid>.json.
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
+[fuzz]
+runs = 1024
+
+[fmt]
+line_length = 110
+ignore = ["node_modules/**"]

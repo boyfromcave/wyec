@@ -1,0 +1,3 @@
+#!/bin/sh
+# Native-solc stand-in for Foundry: FOUNDRY_SOLC=tools/solc forge build (see tools/solc-shim.js).
+exec node "$(dirname "$0")/solc-shim.js" "$@"
