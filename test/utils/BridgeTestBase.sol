@@ -24,7 +24,7 @@ abstract contract BridgeTestBase is Test {
 
     // Events, redeclared for vm.expectEmit.
     event Minted(bytes32 indexed lockId, address indexed to, uint256 amount);
-    event BurnToYcash(uint256 indexed nonce, address indexed from, uint256 amount, bytes32 ycashRecipient);
+    event BurnToYcash(uint256 indexed nonce, address indexed from, uint256 amount, bytes ycashRecipient);
     event GuardiansChanged(address[] guardians, uint8 threshold);
     event MintLimitChanged(uint256 mintCap, uint256 capWindow);
     event MintProposed(
@@ -128,6 +128,28 @@ abstract contract BridgeTestBase is Test {
 
     function guardianPair() internal view returns (uint256[] memory) {
         return keys(guardianKeys[0], guardianKeys[1]);
+    }
+
+    // ------------------------------------------------------------------ recipients (plan §4.2 rev 2)
+
+    /// A kind-0 (P2PKH) recipient: `02 00 <hash160>`, 22 bytes.
+    function p2pkh(bytes20 hash160) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes1(0x02), bytes1(0x00), hash160);
+    }
+
+    /// A kind-1 (P2SH) recipient: `02 01 <hash160>`, 22 bytes.
+    function p2sh(bytes20 hash160) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes1(0x02), bytes1(0x01), hash160);
+    }
+
+    /// A kind-2 (PQPKH) recipient: `02 02 <scheme> <keyHash>`, 35 bytes.
+    function pqpkh(uint8 scheme, bytes32 keyHash) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes1(0x02), bytes1(0x02), bytes1(scheme), keyHash);
+    }
+
+    /// The recipient the tests burn to when the recipient is not the point.
+    function someRecipient() internal pure returns (bytes memory) {
+        return p2pkh(bytes20(uint160(0xAbCd)));
     }
 
     // ------------------------------------------------------------------ acts

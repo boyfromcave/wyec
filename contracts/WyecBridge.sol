@@ -30,7 +30,8 @@ interface IWrappedYcash is IERC7802 {
  *   lockId is opaque bytes32 (the daemon's convention is sha256(txid || vout) of the Ycash vault
  *   output); the contract stores it and never interprets it (R2).
  * Burn:  the holder's own, unconditional act. Emits BurnToYcash(nonce, from, amount, recipient)
- *        which the guardian daemon turns into a Ycash intent (recipient: see `burn`).
+ *        which the guardian daemon turns into a Ycash intent. The recipient is a validated
+ *        encoding (shape only), opaque in meaning: see `burn`.
  * Admin: guardian rotation, pause, mint rate limit and handing the token to a successor bridge,
  *        each under the threshold over an EIP-712 struct carrying the shared `adminNonce`.
  *
@@ -119,8 +120,9 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @notice A lock minted, by either path.
     event Minted(bytes32 indexed lockId, address indexed to, uint256 amount);
-    /// @notice A holder burned `amount` for release to `ycashRecipient` on Ycash.
-    event BurnToYcash(uint256 indexed nonce, address indexed from, uint256 amount, bytes32 ycashRecipient);
+    /// @notice A holder burned `amount` for release to `ycashRecipient` on Ycash (22 or 35 bytes,
+    ///         validated by `burn`; the encoding is documented there).
+    event BurnToYcash(uint256 indexed nonce, address indexed from, uint256 amount, bytes ycashRecipient);
     /// @notice The guardian set or threshold changed.
     event GuardiansChanged(address[] guardians, uint8 threshold);
     /// @notice The mint rate limit changed (also emitted by the constructor).
@@ -167,6 +169,8 @@ contract WyecBridge is EIP712, Pausable {
     error ProposerNotGuardian(address proposer);
     /// @notice The mint would exceed `mintCap` in the current window; `available` remains.
     error MintRateLimited(uint256 amount, uint256 available);
+    /// @notice `burn`'s `ycashRecipient` is not a well-formed revision-2 recipient (see `burn`).
+    error InvalidRecipient();
 
     /// @param token_           the token, deployed next at its predicted address (design §8)
     /// @param guardians_       initial guardian set (the set registered on Ycash)
@@ -266,12 +270,24 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @notice Burns `amount` of the caller's wYEC for release on Ycash. Unconditional (no
     ///         allowance, no guardian); stopped only by pause. Emits `BurnToYcash` with the next nonce.
-    /// @param ycashRecipient opaque to this contract (R2). Hawkeye's encoding (Hawkeye plan §4.2):
-    ///        byte 0 version `0x01`; byte 1 kind `0x00` P2PKH or `0x01` P2SH; bytes 2..11 zero;
-    ///        bytes 12..31 the 20-byte hash160. The release pays `OP_DUP OP_HASH160 <20>
-    ///        OP_EQUALVERIFY OP_CHECKSIG` (P2PKH) or `OP_HASH160 <20> OP_EQUAL` (P2SH). Any other
-    ///        value cannot be paid out; shielded recipients are out of scope.
-    function burn(uint256 amount, bytes32 ycashRecipient) external whenNotPaused {
+    /// @dev    The recipient's shape is checked here because a burn to a malformed recipient would
+    ///         be an unredeemable burn; its meaning (which Ycash output it names) stays opaque to
+    ///         this contract (R2), and whether Ycash will pay it (a scheme-2 recipient before the
+    ///         node's Falcon activation) is not knowable here.
+    /// @param ycashRecipient Hawkeye's recipient encoding, revision 2 (Hawkeye plan §4.2), exactly
+    ///        22 or 35 bytes, else `InvalidRecipient`:
+    ///          byte 0     version, `0x02`
+    ///          byte 1     kind: `0x00` P2PKH | `0x01` P2SH | `0x02` PQPKH
+    ///          bytes 2..  kind 0 / 1: the 20-byte hash160                       (22 bytes in all)
+    ///                     kind 2:     scheme (`0x01` SLH-DSA-SHA2-128s | `0x02` FN-DSA-512)
+    ///                                 followed by the 32-byte keyHash           (35 bytes in all)
+    ///        The release pays `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG` (kind 0),
+    ///        `OP_HASH160 <20> OP_EQUAL` (kind 1) or the node's `TX_PQPKH` script
+    ///        `<keyHash:32> OP_1|OP_2 OP_CHECKPQSIG` (kind 2). Shielded recipients are out of
+    ///        scope. Revision 1 (a `bytes32`: `0x01`, kind, ten zero bytes, hash160) is retired;
+    ///        no deployment carries it.
+    function burn(uint256 amount, bytes calldata ycashRecipient) external whenNotPaused {
+        _checkRecipient(ycashRecipient);
         token.crosschainBurn(msg.sender, amount);
         emit BurnToYcash(burnNonce++, msg.sender, amount, ycashRecipient);
     }
@@ -403,6 +419,18 @@ contract WyecBridge is EIP712, Pausable {
         mintWindow = mintCap_ == 0 ? 0 : block.timestamp / capWindow_;
         mintedInWindow = 0;
         emit MintLimitChanged(mintCap_, capWindow_);
+    }
+
+    /// Reverts unless `r` is a well-formed revision-2 recipient (the table in `burn`): 22 bytes
+    /// `02 00|01 <hash160>` or 35 bytes `02 02 01|02 <keyHash>`. Shape only; nothing else.
+    function _checkRecipient(bytes calldata r) internal pure {
+        if (r.length == 22) {
+            if (r[0] != 0x02 || (r[1] != 0x00 && r[1] != 0x01)) revert InvalidRecipient();
+        } else if (r.length == 35) {
+            if (r[0] != 0x02 || r[1] != 0x02 || (r[2] != 0x01 && r[2] != 0x02)) revert InvalidRecipient();
+        } else {
+            revert InvalidRecipient();
+        }
     }
 
     /// `sigs` must be ordered by strictly ascending recovered address: that makes distinctness a
