@@ -7,7 +7,7 @@ challenge window, under an optional rate limit); see `docs/wyec-contract-design.
 | Path | What |
 |---|---|
 | `contracts/WrappedYcash.sol` | the token: OpenZeppelin ERC-20 + ERC-7802, 8 decimals, 21M cap |
-| `contracts/WyecBridge.sol` | the bridge: mint (threshold and optimistic), burn, pause, rotation, rate limit, hand-off |
+| `contracts/WyecBridge.sol` | the bridge: mint (threshold and optimistic), `burn(uint256, bytes ycashRecipient)` (a validated 22- or 35-byte Ycash recipient, P2PKH / P2SH / post-quantum PQPKH), pause, rotation, rate limit, hand-off |
 | `script/Deploy.s.sol` | predicted-address deployment (design §8), writes `deployments/<chainid>.json` |
 | `test/` | Foundry tests |
 | `tools/solc`, `tools/solc-shim.js` | native-`solc` stand-in over solc-js, for restricted environments |

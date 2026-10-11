@@ -251,8 +251,8 @@ contract WyecBridgeTest is BridgeTestBase {
 
     function test_Burn_EventFieldsAndNonceIncrements() public {
         mintTo(alice, AMOUNT, LOCK);
-        bytes32 r1 = bytes32(uint256(0x0100) << 240 | uint256(uint160(address(0xAbCd))));
-        bytes32 r2 = keccak256("arbitrary-opaque-recipient");
+        bytes memory r1 = p2pkh(bytes20(uint160(0xAbCd)));
+        bytes memory r2 = pqpkh(2, keccak256("some-pq-key-hash"));
         assertEq(bridge.burnNonce(), 0);
 
         vm.expectEmit(true, true, false, true, address(bridge));
@@ -270,10 +270,12 @@ contract WyecBridgeTest is BridgeTestBase {
         assertEq(token.totalSupply(), AMOUNT - 3e8);
     }
 
-    /// BurnToYcash topics: [sig, nonce, from]; data: abi.encode(amount, ycashRecipient).
+    /// BurnToYcash topics: [sig, nonce, from]; data: abi.encode(amount, bytes ycashRecipient), the
+    /// recipient as a dynamic `bytes` (offset, length, the bytes right-padded to a word), byte for
+    /// byte what was passed in.
     function test_Burn_LogLayout() public {
         mintTo(alice, AMOUNT, LOCK);
-        bytes32 rcpt = keccak256("r");
+        bytes memory rcpt = pqpkh(1, keccak256("r"));
         vm.recordLogs();
         vm.prank(alice);
         bridge.burn(7, rcpt);
@@ -281,17 +283,49 @@ contract WyecBridgeTest is BridgeTestBase {
         Vm.Log memory l = logs[logs.length - 1];
         assertEq(l.emitter, address(bridge));
         assertEq(l.topics.length, 3);
-        assertEq(l.topics[0], keccak256("BurnToYcash(uint256,address,uint256,bytes32)"));
+        assertEq(l.topics[0], keccak256("BurnToYcash(uint256,address,uint256,bytes)"));
         assertEq(l.topics[1], bytes32(uint256(0)));
         assertEq(l.topics[2], bytes32(uint256(uint160(alice))));
         assertEq(l.data, abi.encode(uint256(7), rcpt));
+        // Decoded back, the exact 35 bytes come out; the same for a 22-byte recipient.
+        (uint256 amount, bytes memory got) = abi.decode(l.data, (uint256, bytes));
+        assertEq(amount, 7);
+        assertEq(got, rcpt);
+        assertEq(got.length, 35);
+
+        bytes memory rcpt22 = p2sh(bytes20(keccak256("s")));
+        vm.recordLogs();
+        vm.prank(alice);
+        bridge.burn(1, rcpt22);
+        logs = vm.getRecordedLogs();
+        l = logs[logs.length - 1];
+        assertEq(l.data, abi.encode(uint256(1), rcpt22));
+        (, got) = abi.decode(l.data, (uint256, bytes));
+        assertEq(got, rcpt22);
+        assertEq(got.length, 22);
+    }
+
+    /// The ABI is `burn(uint256,bytes)`; the revision-1 `burn(uint256,bytes32)` selector no longer
+    /// exists on the contract (no fallback either), so a caller built against it reverts.
+    function test_Burn_SelectorIsBytesNotBytes32() public {
+        assertEq(WyecBridge.burn.selector, bytes4(keccak256("burn(uint256,bytes)")));
+        mintTo(alice, AMOUNT, LOCK);
+        bytes4 oldSelector = bytes4(keccak256("burn(uint256,bytes32)"));
+        assertTrue(oldSelector != WyecBridge.burn.selector);
+        vm.prank(alice);
+        (bool ok, bytes memory ret) =
+            address(bridge).call(abi.encodeWithSelector(oldSelector, uint256(1), bytes32(0)));
+        assertFalse(ok);
+        assertEq(ret.length, 0);
+        assertEq(token.balanceOf(alice), AMOUNT);
+        assertEq(bridge.burnNonce(), 0);
     }
 
     function test_Burn_NeedsNoAllowance() public {
         mintTo(alice, AMOUNT, LOCK);
         assertEq(token.allowance(alice, address(bridge)), 0);
         vm.prank(alice);
-        bridge.burn(AMOUNT, bytes32(0));
+        bridge.burn(AMOUNT, someRecipient());
         assertEq(token.balanceOf(alice), 0);
     }
 
@@ -301,18 +335,167 @@ contract WyecBridgeTest is BridgeTestBase {
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, AMOUNT, AMOUNT + 1)
         );
         vm.prank(alice);
-        bridge.burn(AMOUNT + 1, bytes32(0));
+        bridge.burn(AMOUNT + 1, someRecipient());
         assertEq(bridge.burnNonce(), 0);
     }
 
     /// The contract accepts a zero-amount burn and spends a nonce on it: the daemon must treat such
     /// a burn as orphaned (nothing to release), never as a gap in the nonce sequence.
     function test_Burn_ZeroAmountConsumesNonce() public {
+        bytes memory r = someRecipient();
         vm.expectEmit(true, true, false, true, address(bridge));
-        emit BurnToYcash(0, bob, 0, bytes32(0));
+        emit BurnToYcash(0, bob, 0, r);
         vm.prank(bob);
-        bridge.burn(0, bytes32(0));
+        bridge.burn(0, r);
         assertEq(bridge.burnNonce(), 1);
+    }
+
+    // ------------------------------------------------------------------ burn: recipient validation
+    // Hawkeye plan §4.2 revision 2: 22 bytes `02 00|01 <hash160>` or 35 bytes `02 02 01|02 <keyHash>`.
+
+    /// Burns `r` as alice and expects it to go through, emitting exactly `r`.
+    function burnAccepted(bytes memory r) internal {
+        uint256 nonce = bridge.burnNonce();
+        uint256 bal = token.balanceOf(alice);
+        vm.expectEmit(true, true, false, true, address(bridge));
+        emit BurnToYcash(nonce, alice, 1, r);
+        vm.prank(alice);
+        bridge.burn(1, r);
+        assertEq(bridge.burnNonce(), nonce + 1);
+        assertEq(token.balanceOf(alice), bal - 1);
+    }
+
+    /// Burns `r` as alice and expects `InvalidRecipient`: no burn, no nonce spent.
+    function burnRejected(bytes memory r) internal {
+        uint256 nonce = bridge.burnNonce();
+        uint256 bal = token.balanceOf(alice);
+        vm.expectRevert(WyecBridge.InvalidRecipient.selector);
+        vm.prank(alice);
+        bridge.burn(1, r);
+        assertEq(bridge.burnNonce(), nonce);
+        assertEq(token.balanceOf(alice), bal);
+    }
+
+    function test_Burn_Recipient_P2pkhAccepted() public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(p2pkh(bytes20(keccak256("p2pkh"))));
+        burnAccepted(p2pkh(bytes20(0))); // the hash is not interpreted: all-zero is well-formed
+        burnAccepted(p2pkh(bytes20(type(uint160).max)));
+    }
+
+    function test_Burn_Recipient_P2shAccepted() public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(p2sh(bytes20(keccak256("p2sh"))));
+        burnAccepted(p2sh(bytes20(0)));
+    }
+
+    function test_Burn_Recipient_PqpkhScheme1Accepted() public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(pqpkh(1, keccak256("slh-dsa")));
+        burnAccepted(pqpkh(1, bytes32(0)));
+    }
+
+    /// Scheme 2 (FN-DSA-512) is accepted whether or not Falcon is active on Ycash: the contract
+    /// cannot know; the burner bears a release the node refuses before activation (plan §4.2).
+    function test_Burn_Recipient_PqpkhScheme2Accepted() public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(pqpkh(2, keccak256("fn-dsa")));
+        burnAccepted(pqpkh(2, bytes32(type(uint256).max)));
+    }
+
+    function test_Burn_Recipient_WrongVersionRejected() public {
+        mintTo(alice, AMOUNT, LOCK);
+        bytes20 h = bytes20(keccak256("h"));
+        bytes32 k = keccak256("k");
+        // Revision 1's version byte, and every other non-2 value, on both lengths.
+        burnRejected(abi.encodePacked(bytes1(0x01), bytes1(0x00), h));
+        burnRejected(abi.encodePacked(bytes1(0x00), bytes1(0x00), h));
+        burnRejected(abi.encodePacked(bytes1(0x03), bytes1(0x01), h));
+        burnRejected(abi.encodePacked(bytes1(0xFF), bytes1(0x00), h));
+        burnRejected(abi.encodePacked(bytes1(0x01), bytes1(0x02), bytes1(0x01), k));
+        burnRejected(abi.encodePacked(bytes1(0x03), bytes1(0x02), bytes1(0x02), k));
+    }
+
+    function test_Burn_Recipient_WrongKindRejected() public {
+        mintTo(alice, AMOUNT, LOCK);
+        bytes20 h = bytes20(keccak256("h"));
+        bytes32 k = keccak256("k");
+        // 22 bytes: only kinds 0 and 1; kind 2 (PQPKH) is 35 bytes, so it is wrong at 22.
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0x02), h));
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0x03), h));
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0xFF), h));
+        // 35 bytes: only kind 2; kinds 0 and 1 are 22 bytes, so they are wrong at 35.
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0x00), bytes1(0x01), k));
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0x01), bytes1(0x01), k));
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0x03), bytes1(0x01), k));
+        burnRejected(abi.encodePacked(bytes1(0x02), bytes1(0xFF), bytes1(0x02), k));
+    }
+
+    function test_Burn_Recipient_PqpkhBadSchemeRejected() public {
+        mintTo(alice, AMOUNT, LOCK);
+        bytes32 k = keccak256("k");
+        burnRejected(pqpkh(0, k));
+        burnRejected(pqpkh(3, k));
+        burnRejected(pqpkh(0xFF, k));
+    }
+
+    function test_Burn_Recipient_WrongLengthRejected() public {
+        mintTo(alice, AMOUNT, LOCK);
+        bytes memory r22 = p2pkh(bytes20(keccak256("h")));
+        bytes memory r35 = pqpkh(1, keccak256("k"));
+        burnRejected(""); // empty
+        burnRejected(hex"02"); // 1
+        burnRejected(hex"0200"); // 2
+        burnRejected(slice(r22, 21)); // 21: one byte short of P2PKH
+        burnRejected(abi.encodePacked(r22, bytes1(0))); // 23: one byte over
+        burnRejected(abi.encodePacked(r22, new bytes(10))); // 32: revision 1's length, well-formed prefix
+        burnRejected(abi.encodePacked(bytes1(0x01), bytes1(0x00), new bytes(10), bytes20(keccak256("h")))); // 32: a revision-1 value
+        burnRejected(slice(r35, 34)); // 34: one byte short of PQPKH
+        burnRejected(abi.encodePacked(r35, bytes1(0))); // 36: one byte over
+        burnRejected(abi.encodePacked(r35, r22)); // 57
+    }
+
+    function slice(bytes memory b, uint256 n) internal pure returns (bytes memory out) {
+        out = new bytes(n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = b[i];
+        }
+    }
+
+    /// Every 22-byte recipient with version 2 and kind 0 or 1 is accepted, whatever the hash.
+    function testFuzz_Burn_Recipient_Valid22Accepted(bytes20 h, bool scriptHash) public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(scriptHash ? p2sh(h) : p2pkh(h));
+    }
+
+    /// Every 35-byte recipient with version 2, kind 2 and scheme 1 or 2 is accepted, whatever the key hash.
+    function testFuzz_Burn_Recipient_Valid35Accepted(bytes32 k, bool falcon) public {
+        mintTo(alice, AMOUNT, LOCK);
+        burnAccepted(pqpkh(falcon ? 2 : 1, k));
+    }
+
+    /// No other length is accepted, whatever the content.
+    function testFuzz_Burn_Recipient_OtherLengthRejected(bytes calldata r) public {
+        vm.assume(r.length != 22 && r.length != 35);
+        mintTo(alice, AMOUNT, LOCK);
+        burnRejected(r);
+    }
+
+    /// At 22 bytes only `(0x02, 0x00|0x01)` passes; at 35 only `(0x02, 0x02, 0x01|0x02)`.
+    function testFuzz_Burn_Recipient_HeaderDecides(
+        uint8 version,
+        uint8 kind,
+        uint8 scheme,
+        bytes20 h,
+        bytes32 k
+    ) public {
+        mintTo(alice, AMOUNT, LOCK);
+        bytes memory r22 = abi.encodePacked(bytes1(version), bytes1(kind), h);
+        bytes memory r35 = abi.encodePacked(bytes1(version), bytes1(kind), bytes1(scheme), k);
+        if (version == 2 && kind <= 1) burnAccepted(r22);
+        else burnRejected(r22);
+        if (version == 2 && kind == 2 && (scheme == 1 || scheme == 2)) burnAccepted(r35);
+        else burnRejected(r35);
     }
 
     // ------------------------------------------------------------------ pause
@@ -329,7 +512,7 @@ contract WyecBridgeTest is BridgeTestBase {
         bridge.mint(lock2, 1, alice, sigs);
         vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(alice);
-        bridge.burn(1, bytes32(0));
+        bridge.burn(1, someRecipient());
 
         vm.prank(alice);
         assertTrue(token.transfer(bob, 1e8));
@@ -340,7 +523,7 @@ contract WyecBridgeTest is BridgeTestBase {
         assertEq(bridge.adminNonce(), 2);
         bridge.mint(lock2, 1, alice, sigs); // signed while paused, still valid after
         vm.prank(alice);
-        bridge.burn(1, bytes32(0));
+        bridge.burn(1, someRecipient());
     }
 
     /// setPaused to the current state reverts (OpenZeppelin Pausable) and spends no adminNonce:
@@ -461,7 +644,7 @@ contract WyecBridgeTest is BridgeTestBase {
         bridge.mint(lock2, 1, alice, sigs);
         vm.expectRevert(abi.encodeWithSelector(WrappedYcash.NotBridge.selector, address(bridge)));
         vm.prank(alice);
-        bridge.burn(1, bytes32(0));
+        bridge.burn(1, someRecipient());
 
         // The successor mints directly; balances are untouched.
         vm.prank(successor);

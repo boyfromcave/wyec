@@ -8,6 +8,10 @@ Revision 2026-10-08: the optimistic mint and the mint rate limit (§4.5; Hawkeye
 `docs/hawkeye-bridge-plan.md` CR-W1), the recipient encoding in the contract's NatSpec (§4.2,
 CR-W3), and a Foundry project replacing the npm compile check (§7, §8, CR-W2).
 
+Revision 2026-10-11: `ycashRecipient` revision 2 (Hawkeye plan §4.2, Q-7, CR-W4): `burn` takes
+`bytes` (22 or 35 bytes) instead of `bytes32`, gains a post-quantum `PQPKH` kind, and the
+contract validates the recipient's shape and refuses anything else (§4.2).
+
 ## 1. What is deployed today, and why it cannot be reused
 
 `contracts/Wry.sol` in https://github.com/boyfromcave/wry is byte-for-byte the source Sourcify matches to
@@ -37,7 +41,8 @@ custodian still holding the YEC, and is the Foundation's call, not this design's
 1. `mint(lockId, amount, to, sigs[])`: guardian threshold, `lockId` an opaque `bytes32` the
    contract stores and never parses (R2), each lock mintable once.
 2. `burn(amount, ycashRecipient)`: the holder's own act, unconditional, emitting the event the
-   daemon turns into a Ycash intent. The recipient is opaque bytes on this side too.
+   daemon turns into a Ycash intent. The recipient is a validated encoding, opaque in meaning, on
+   this side too (§4.2).
 3. Guardian set rotation and pause by the same threshold.
 4. No Equihash, no SPV, no light client, nothing that reads Ycash state.
 5. (Added with the Foundation's attestation model, Hawkeye plan §0 item 4.) One attestation, a
@@ -78,7 +83,7 @@ _checkTokenBridge: caller == bridge   consumed[lockId], proposals[lockId], mintC
                                       proposeMint(lockId, amount, to, sig)    one guardian (§4.5)
                                       challengeMint(lockId, proposalId, sig)  any one guardian
                                       executeMint(lockId)                     anyone, after the window
-                                      burn(amount, bytes32 ycashRecipient) → token.crosschainBurn, emit BurnToYcash
+                                      burn(amount, bytes ycashRecipient)   validate shape → token.crosschainBurn, emit BurnToYcash
                                       setGuardians(newSet, newThreshold, sigs[])
                                       setPaused(bool, sigs[])
                                       setMintLimit(mintCap, capWindow, sigs[])
@@ -125,21 +130,42 @@ mint(bytes32 lockId, uint256 amount, address to, bytes[] sigs)
 ### 4.2 Burn
 
 ```
-burn(uint256 amount, bytes32 ycashRecipient)
+burn(uint256 amount, bytes ycashRecipient)
   require !paused
+  require ycashRecipient well-formed (below)          -- else InvalidRecipient, nothing burned
   token.crosschainBurn(msg.sender, amount)             -- bridge is the token's only burner
   emit BurnToYcash(burnNonce++, msg.sender, amount, ycashRecipient)
 ```
 
 - Unconditional for the holder: the guardians cannot refuse an exit on Ethereum (they act, or
   are cancelled, on the Ycash release; and if they go silent the depositor branch opens, R1).
-- `ycashRecipient` is 32 opaque bytes to the contract (R2). Its encoding is the daemon's (Hawkeye
-  plan §4.2), restated in `burn`'s NatSpec (CR-W3): byte 0 version `0x01`; byte 1 kind `0x00`
-  P2PKH or `0x01` P2SH; bytes 2..11 zero; bytes 12..31 the hash160. The release pays
-  `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG` or `OP_HASH160 <20> OP_EQUAL`; any other
-  value cannot be paid, and shielded recipients are out of scope (the user shields after release). The event's `(nonce, amount, recipient)`
-  is what the daemon posts as the Ycash intent; `nonce` is the bridge's monotone counter so the
-  Ycash-side equivocation guard (plan §3.6, S16) has a stable key.
+- `ycashRecipient` is a **validated encoding, opaque in meaning** to the contract (R2): the
+  contract checks its shape, never which Ycash output it names or whether Ycash will pay it. The
+  encoding is the daemon's (Hawkeye plan §4.2, revision 2; CR-W3, CR-W4), restated in `burn`'s
+  NatSpec:
+
+  ```
+  byte 0      version = 0x02
+  byte 1      kind    = 0x00 P2PKH | 0x01 P2SH | 0x02 PQPKH
+  bytes 2..   kind 0x00 / 0x01: hash160 (20 bytes)                         → 22 bytes in all
+              kind 0x02:        scheme (0x01 SLH-DSA-SHA2-128s | 0x02 FN-DSA-512)
+                                ‖ keyHash (32 bytes)                        → 35 bytes in all
+  ```
+
+  Anything else (another length, another version, an unknown kind, kind 2 with a scheme other
+  than 1 or 2) reverts `InvalidRecipient()` and burns nothing: a burn to a malformed recipient
+  would be an unredeemable burn, so it never happens. The release pays `OP_DUP OP_HASH160 <20>
+  OP_EQUALVERIFY OP_CHECKSIG` (kind 0), `OP_HASH160 <20> OP_EQUAL` (kind 1) or the node's
+  `TX_PQPKH` script `<keyHash:32> OP_1|OP_2 OP_CHECKPQSIG` (kind 2, the post-quantum `sq…` /
+  `tq…` / `rq…` address). Scheme 2 is accepted whether or not Falcon is active on Ycash: the
+  contract cannot know, and the burner bears a release the node refuses before activation
+  (`hawkeye burn` warns). Shielded recipients are out of scope (the user shields after release).
+  Revision 1 (the former `bytes32`: `0x01`, kind, ten zero bytes, hash160) is retired; no
+  deployment carries it, and the old `burn(uint256,bytes32)` selector no longer exists. No Ycash
+  node change is involved: the intent commits `SHA256(script)` and `vault_release` takes the
+  script. The event's `(nonce, amount, recipient)` is what the daemon posts as the Ycash intent;
+  `nonce` is the bridge's monotone counter so the Ycash-side equivocation guard (plan §3.6, S16)
+  has a stable key.
 - Because the bridge calls `crosschainBurn(msg.sender, …)`, the holder needs no allowance and
   no two-step. A `burnFrom` variant with allowance is a one-liner if a contract holder needs it.
 - Only burns in **finalised** Ethereum blocks become intents (daemon policy, §11 row 3).
@@ -275,11 +301,13 @@ total: a quorum able to set the cap could raise it anyway. The total is not coun
 Measured on anvil (solc 0.8.37, 200 runs, transaction gas including the 21,000 base):
 `proposeMint` 128,346 (first proposal ever; a later one about 111,000), `challengeMint` 38,118
 (storage refund included), `executeMint` 134,406 (first mint ever, rate limit on; about 107,000
-typical). Deployed size 9,446 bytes (was 5,361); the token is unchanged at 4,683.
+typical). Deployed size 9,446 bytes (was 5,361; 10,015 with the §4.2 recipient check); the token
+is unchanged at 4,683.
 
 ## 5. What is deliberately not in the contract
 
-- Any verification of Ycash data (block headers, Equihash, payloads). R2.
+- Any verification of Ycash data (block headers, Equihash, payloads). R2. (The `burn` recipient
+  check is a shape check on the daemon's encoding, §4.2, not a reading of Ycash state.)
 - Any release logic. Release, delay, cancel, rate limit and slashing are Ycash consensus (§3).
 - A proxy. Successor bridges, not upgrades.
 - Transfer pausing or blacklisting.
@@ -332,5 +360,6 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=100000000
 3. Each guardian reads back `guardians`, `threshold`, `challengeWindow`, `mintCap`, `capWindow`,
    `token.bridge()` and `bridge.token()` before signing anything for the deployment.
 
-Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 9,446 bytes deployed (5,361
-before §4.5), `WrappedYcash` 4,683 bytes; the EIP-170 limit is 24,576.
+Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 10,015 bytes deployed (5,361
+before §4.5, 9,446 before the §4.2 recipient check), `WrappedYcash` 4,683 bytes; the EIP-170 limit
+is 24,576.
