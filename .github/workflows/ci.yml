@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main, upgrade/vault, "claude/**"]
   pull_request:
 
 permissions:
