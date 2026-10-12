@@ -1,8 +1,15 @@
 # wyec
 
-Wrapped Ycash (wYEC): the Ethereum side of the Yellowback upgrade plan's bridge.
-Mintable and burnable through a guardian bridge (threshold mint, or optimistic mint with a
-challenge window, under an optional rate limit); see `docs/wyec-contract-design.md`.
+Wrapped Ycash (wYEC): the Ethereum side of the wYEC bridge in
+[Ycash vaults and Yellowback](https://github.com/boyfromcave/yellowback), the proposed Ycash
+network upgrade. YEC locked in vaults on Ycash is minted here as wYEC, 1:1; wYEC burned here is
+released on Ycash. Mintable and burnable through a guardian bridge (threshold mint, or optimistic
+mint with a challenge window, under an optional rate limit); see `docs/wyec-contract-design.md`.
+The bridge attestors run [Hawkeye](https://github.com/boyfromcave/hawkeye) against these
+contracts.
+
+> **Status: drafts.** Not audited and not deployed. The guardians are the attestors' secp256k1
+> keys; the post-quantum keys on the Ycash side (vault owners) never reach these contracts.
 
 | Path | What |
 |---|---|
