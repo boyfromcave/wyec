@@ -45,7 +45,8 @@ contract RateLimitTest is BridgeTestBase {
     function test_SetMintLimit_ReplayRejected() public {
         bytes[] memory sigs = signedSetMintLimit(CAP, DAY);
         bridge.setMintLimit(CAP, DAY, sigs);
-        vm.expectRevert(); // adminNonce moved: the old digest recovers to non-guardians
+        // adminNonce moved: over the nonce-1 digest the old signature recovers to a non-guardian.
+        expectNotGuardian(setMintLimitDigest(CAP, DAY, 1), sigs[0]);
         bridge.setMintLimit(CAP, DAY, sigs);
     }
 
@@ -59,7 +60,7 @@ contract RateLimitTest is BridgeTestBase {
         bridge.setMintLimit(0, 0, withOutsider);
         // Fields are signed: the pair's signatures over (0, 0) do not authorise (1, 1).
         bytes[] memory pair = signSorted(guardianPair(), d);
-        vm.expectRevert();
+        expectNotGuardian(setMintLimitDigest(1, 1, 0), pair[0]);
         bridge.setMintLimit(1, 1, pair);
         assertEq(bridge.adminNonce(), 0);
     }

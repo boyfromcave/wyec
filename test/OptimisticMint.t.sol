@@ -171,7 +171,8 @@ contract OptimisticMintTest is BridgeTestBase {
     function test_Propose_OtherDeploymentSignatureRejected() public {
         (, WyecBridge other) = deployPair(guardianAddrs, 2);
         bytes memory sig = sign(guardianKeys[0], mintDigest(address(other), LOCK, AMOUNT, alice));
-        vm.expectRevert();
+        // Recovered against *this* bridge's digest, the foreign signature names a non-guardian.
+        expectNotGuardian(mintDigest(address(bridge), LOCK, AMOUNT, alice), sig);
         bridge.proposeMint(LOCK, AMOUNT, alice, sig);
     }
 

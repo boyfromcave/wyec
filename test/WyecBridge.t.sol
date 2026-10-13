@@ -181,11 +181,11 @@ contract WyecBridgeTest is BridgeTestBase {
     /// Amount and recipient are inside the signed struct: a submitter cannot alter them.
     function test_Mint_TamperedFieldsRejected() public {
         bytes[] memory sigs = signSorted(guardianPair(), mintDigest(address(bridge), LOCK, AMOUNT, alice));
-        vm.expectRevert();
+        expectNotGuardian(mintDigest(address(bridge), LOCK, AMOUNT + 1, alice), sigs[0]);
         bridge.mint(LOCK, AMOUNT + 1, alice, sigs);
-        vm.expectRevert();
+        expectNotGuardian(mintDigest(address(bridge), LOCK, AMOUNT, bob), sigs[0]);
         bridge.mint(LOCK, AMOUNT, bob, sigs);
-        vm.expectRevert();
+        expectNotGuardian(mintDigest(address(bridge), keccak256("other"), AMOUNT, alice), sigs[0]);
         bridge.mint(keccak256("other"), AMOUNT, alice, sigs);
         assertFalse(bridge.consumed(LOCK));
     }
@@ -194,7 +194,7 @@ contract WyecBridgeTest is BridgeTestBase {
     function test_Mint_OtherDeploymentSignatureRejected() public {
         (, WyecBridge other) = deployPair(guardianAddrs, 2);
         bytes[] memory sigs = signSorted(guardianPair(), mintDigest(address(other), LOCK, AMOUNT, alice));
-        vm.expectRevert();
+        expectNotGuardian(mintDigest(address(bridge), LOCK, AMOUNT, alice), sigs[0]);
         bridge.mint(LOCK, AMOUNT, alice, sigs);
     }
 
@@ -543,7 +543,9 @@ contract WyecBridgeTest is BridgeTestBase {
     function test_Pause_ReplayOfAdminSigsRejected() public {
         bytes[] memory sigs = signedSetPaused(true);
         bridge.setPaused(true, sigs);
-        vm.expectRevert(); // adminNonce moved: the old digest recovers to non-guardians
+        // adminNonce moved: the contract's digest is now the nonce-1 one, over which the old
+        // signature recovers to a non-guardian.
+        expectNotGuardian(setPausedDigest(true, 1), sigs[0]);
         bridge.setPaused(true, sigs);
     }
 

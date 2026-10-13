@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {WrappedYcash} from "../../contracts/WrappedYcash.sol";
 import {IWrappedYcash, WyecBridge} from "../../contracts/WyecBridge.sol";
 import {WyecEip712} from "./WyecEip712.sol";
@@ -92,6 +93,30 @@ abstract contract BridgeTestBase is Test {
 
     function challengeDigest(address b, bytes32 lockId, uint256 proposalId) internal view returns (bytes32) {
         return WyecEip712.digest(domainOf(b), WyecEip712.challengeStruct(lockId, proposalId));
+    }
+
+    /// Expects the next call to revert `NotGuardian(r)`, `r` being what `sig0` recovers to over
+    /// `digest` (the digest the contract computes from the submitted fields). `_checkThreshold`
+    /// recovers `sigs[0]` first; over a foreign digest a valid signature recovers to a non-guardian
+    /// (never address(0): OZ reverts on an invalid signature), so the first revert is NotGuardian(r).
+    /// The exact selector and argument, never a bare `vm.expectRevert()`: an ABI decoding error or an
+    /// unrelated `require` must not pass a negative test.
+    function expectNotGuardian(bytes32 digest, bytes memory sig0) internal {
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.NotGuardian.selector, ECDSA.recover(digest, sig0)));
+    }
+
+    function setPausedDigest(bool paused, uint256 adminNonce) internal view returns (bytes32) {
+        return WyecEip712.digest(domainOf(address(bridge)), WyecEip712.setPausedStruct(paused, adminNonce));
+    }
+
+    function setMintLimitDigest(uint256 mintCap, uint256 capWindow, uint256 adminNonce)
+        internal
+        view
+        returns (bytes32)
+    {
+        return WyecEip712.digest(
+            domainOf(address(bridge)), WyecEip712.setMintLimitStruct(mintCap, capWindow, adminNonce)
+        );
     }
 
     /// Signatures by `pks`, ordered by ascending signer address (the contract's rule).
