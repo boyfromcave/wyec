@@ -45,4 +45,5 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=0 CAP_WIN
   forge script script/Deploy.s.sol --rpc-url $RPC --broadcast --private-key $KEY
 ```
 
-Parameters and the mainnet requirements (`THRESHOLD >= 2`): design §4.5.3 and §8.
+Parameters and the mainnet requirements (`THRESHOLD >= 2`, `CHALLENGE_WINDOW >= 7200`, `MINT_CAP > 0`,
+enforced by the constructor and the script on chain id 1): design §4.5.3 and §8.

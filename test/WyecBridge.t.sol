@@ -63,6 +63,32 @@ contract WyecBridgeTest is BridgeTestBase {
         new WyecBridge(IWrappedYcash(address(token)), g, 1, WINDOW, 0, 0);
     }
 
+    /// Mainnet (chain id 1) floors in the constructor: threshold >= 2, challengeWindow >= 2 hours,
+    /// mintCap != 0; each refused by its own selector, all three met deploys. Other chains: none.
+    function test_Deploy_MainnetFloors() public {
+        IWrappedYcash t = IWrappedYcash(address(token));
+        assertEq(bridge.MIN_MAINNET_CHALLENGE_WINDOW(), 2 hours);
+        vm.chainId(1);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetChallengeWindow.selector, uint64(1 hours)));
+        new WyecBridge(t, guardianAddrs, 2, 1 hours, 5e8, 1 days);
+        vm.expectRevert(
+            abi.encodeWithSelector(WyecBridge.MainnetChallengeWindow.selector, uint64(2 hours - 1))
+        );
+        new WyecBridge(t, guardianAddrs, 2, 2 hours - 1, 5e8, 1 days);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetThreshold.selector, uint8(1)));
+        new WyecBridge(t, guardianAddrs, 1, 2 hours, 5e8, 1 days);
+        vm.expectRevert(WyecBridge.MainnetMintCapRequired.selector);
+        new WyecBridge(t, guardianAddrs, 2, 2 hours, 0, 0);
+        WyecBridge b = new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days);
+        assertEq(b.challengeWindow(), 2 hours);
+        assertEq(b.mintCap(), 5e8);
+
+        // Off mainnet the floors do not apply (tests and devnets run 60-second windows, no cap).
+        vm.chainId(11155111);
+        b = new WyecBridge(t, guardianAddrs, 1, 60, 0, 0);
+        assertEq(b.challengeWindow(), 60);
+    }
+
     function test_Constructor_ParamsAndEvents() public {
         address[] memory g = new address[](1);
         g[0] = address(1);
