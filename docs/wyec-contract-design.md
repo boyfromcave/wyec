@@ -169,6 +169,11 @@ burn(uint256 amount, bytes ycashRecipient)
 - Because the bridge calls `crosschainBurn(msg.sender, …)`, the holder needs no allowance and
   no two-step. A `burnFrom` variant with allowance is a one-liner if a contract holder needs it.
 - Only burns in **finalised** Ethereum blocks become intents (daemon policy, §11 row 3).
+- `burn` has no per-burn maximum (R2: the contract knows no Ycash parameter). A burn larger than
+  the Ycash attestor set's whole per-window unlock cap is not released until the set's parameters
+  change (a raised `ratelimitbps`, or more value locked); Hawkeye parks it out of the FIFO with
+  the alarm `burn-over-cap`, so later burns are served (Hawkeye plan §5.5; audit 05/M-2). A
+  contract-side `maxBurn` (Hawkeye plan §10 CR-W5) is an open, non-blocking option.
 
 ### 4.3 Guardian set and pause
 
@@ -266,7 +271,7 @@ executeMint(bytes32 lockId)                                                     
 | Compromised guardian removed by rotation with proposals pending | n/a | its proposals are void at execute |
 | Nobody watching during the window | n/a | the rate limit bounds the loss per window (§4.5.4) |
 | Front-running a proposal or an execute | n/a | harmless: `(lockId, amount, to)` is signed; the front-runner pays the gas |
-| A guardian challenging every correct proposal (griefing) | n/a | liveness only, no loss: the threshold path still mints; each challenge is a signed, attributable act the set can answer with rotation on Ycash |
+| A guardian challenging every correct proposal (griefing) | n/a | liveness only, no loss: the threshold path still mints; each challenge is a signed, attributable act the set can answer with rotation on Ycash. Hawkeye falls back to the threshold path automatically once every live proposer is vetoed and opens a `GRIEFING` case against the challenger (Hawkeye plan §5.3, HK-15; audit 05/L-4) |
 
 **What it does not address.** A quorum of `threshold` keys still mints immediately through
 `mint`, and can lift the rate limit. The optimistic path therefore adds a window only if no
