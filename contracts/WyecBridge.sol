@@ -43,6 +43,11 @@ interface IWrappedYcash is IERC7802 {
  * `threshold >= 2`. With `threshold == 1` one key mints immediately through `mint` and can also
  * lift the rate limit; such a deployment is for development only (design §4.5).
  *
+ * Mainnet floors (chain id 1, enforced by the constructor): `threshold >= 2`,
+ * `challengeWindow >= MIN_MAINNET_CHALLENGE_WINDOW` (the watchers' detection must fit in the window
+ * even across an Ethereum finality delay) and `mintCap != 0` (the loss a rogue proposer can cause
+ * while nobody challenges is bounded). Other chains are unconstrained (tests, devnets).
+ *
  * There is no release logic here: release, delay, cancel, rate limit and slashing of the Ycash
  * side are Ycash consensus rules (plan §3).
  */
@@ -81,6 +86,13 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @notice The token this bridge mints and burns.
     IWrappedYcash public immutable token;
+
+    /// @notice The smallest `challengeWindow` the constructor accepts on mainnet (chain id 1): the
+    ///         watchers keep a quarter of the window as margin, and the other three quarters must
+    ///         cover two Ethereum finality periods (2 x 768 s), 20 Ycash blocks for the lock check
+    ///         (20 x 75 s) and a submission margin (600 s): 3/4 W >= 3,636 s, W >= 4,848 s, rounded
+    ///         up to two hours (design §4.5.3; Hawkeye's `MAINNET_MIN_CHALLENGE_WINDOW_SECS`).
+    uint64 public constant MIN_MAINNET_CHALLENGE_WINDOW = 2 hours;
 
     /// @notice Seconds between `proposeMint` and the earliest `executeMint` (> 0).
     uint64 public immutable challengeWindow;
@@ -153,6 +165,12 @@ contract WyecBridge is EIP712, Pausable {
     error ZeroChallengeWindow();
     /// @notice `mintCap != 0` with `capWindow == 0`.
     error BadMintLimit();
+    /// @notice Mainnet construction with `threshold < 2` (one key would bypass the window).
+    error MainnetThreshold(uint8 threshold);
+    /// @notice Mainnet construction with `challengeWindow < MIN_MAINNET_CHALLENGE_WINDOW`.
+    error MainnetChallengeWindow(uint64 challengeWindow);
+    /// @notice Mainnet construction with `mintCap == 0` (an unbounded rate limit).
+    error MainnetMintCapRequired();
     /// @notice `proposeMint` with `amount == 0`.
     error ZeroAmount();
     /// @notice `proposeMint` with `to == address(0)`.
@@ -174,9 +192,11 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @param token_           the token, deployed next at its predicted address (design §8)
     /// @param guardians_       initial guardian set (the set registered on Ycash)
-    /// @param threshold_       signatures needed by `mint` and the admin acts
-    /// @param challengeWindow_ optimistic-mint challenge window in seconds, > 0
-    /// @param mintCap_         initial rate limit per window in base units; 0 = no limit
+    /// @param threshold_       signatures needed by `mint` and the admin acts; >= 2 on mainnet
+    /// @param challengeWindow_ optimistic-mint challenge window in seconds, > 0;
+    ///                         >= MIN_MAINNET_CHALLENGE_WINDOW on mainnet
+    /// @param mintCap_         initial rate limit per window in base units; 0 = no limit (not on
+    ///                         mainnet)
     /// @param capWindow_       initial window length in seconds; > 0 when `mintCap_ != 0`
     constructor(
         IWrappedYcash token_,
@@ -187,6 +207,13 @@ contract WyecBridge is EIP712, Pausable {
         uint256 capWindow_
     ) EIP712("WyecBridge", "1") {
         if (challengeWindow_ == 0) revert ZeroChallengeWindow();
+        if (block.chainid == 1) {
+            if (threshold_ < 2) revert MainnetThreshold(threshold_);
+            if (challengeWindow_ < MIN_MAINNET_CHALLENGE_WINDOW) {
+                revert MainnetChallengeWindow(challengeWindow_);
+            }
+            if (mintCap_ == 0) revert MainnetMintCapRequired();
+        }
         token = token_;
         challengeWindow = challengeWindow_;
         _setGuardians(guardians_, threshold_);

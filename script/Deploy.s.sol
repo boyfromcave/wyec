@@ -12,8 +12,10 @@ import {IWrappedYcash, WyecBridge} from "../contracts/WyecBridge.sol";
 /// Environment:
 ///   GUARDIANS          comma-separated guardian addresses (required)
 ///   THRESHOLD          k of the threshold mint and the admin acts (required; >= 2 on mainnet)
-///   CHALLENGE_WINDOW   optimistic-mint challenge window in seconds (required, > 0)
-///   MINT_CAP           mint rate limit in wYEC base units per CAP_WINDOW (default 0 = no limit)
+///   CHALLENGE_WINDOW   optimistic-mint challenge window in seconds (required, > 0; >= 2 hours on
+///                      mainnet)
+///   MINT_CAP           mint rate limit in wYEC base units per CAP_WINDOW (default 0 = no limit;
+///                      not on mainnet, where it is required)
 ///   CAP_WINDOW         rate-limit window in seconds (default 0; > 0 when MINT_CAP > 0)
 ///   DEPLOYMENT_FILE    output path (default deployments/<chainid>.json)
 ///
@@ -61,6 +63,13 @@ contract Deploy is Script {
         // (design §4.5): never on mainnet.
         require(block.chainid != 1 || c.threshold >= 2, "THRESHOLD must be >= 2 on mainnet");
         require(c.challengeWindow > 0 && c.challengeWindow <= type(uint64).max, "bad CHALLENGE_WINDOW");
+        // The constructor enforces the same two floors (design §4.5.3); checked here first so the
+        // script fails before broadcasting, with a message naming the variable.
+        require(
+            block.chainid != 1 || c.challengeWindow >= 2 hours,
+            "CHALLENGE_WINDOW must be >= 2 hours on mainnet"
+        );
+        require(block.chainid != 1 || c.mintCap > 0, "MINT_CAP is required on mainnet");
         require(c.mintCap == 0 || c.capWindow > 0, "CAP_WINDOW must be > 0 when MINT_CAP > 0");
 
         r.deployBlock = block.number + 1;

@@ -278,16 +278,32 @@ executeMint(bytes32 lockId)                                                     
 single key can use the fast path: **`threshold >= 2` is required wherever the optimistic path is
 the security model** (the Foundation's model is then "one attestation + window" for routine
 mints and "quorum, immediate" for overrides and admin). `threshold = 1` is a development
-setting; `script/Deploy.s.sol` refuses it on mainnet (chain id 1).
+setting; the constructor and `script/Deploy.s.sol` refuse it on mainnet (chain id 1).
+
+**Finality.** The contract runs the protocol at `latest`: `proposeMint` sets
+`eta = block.timestamp + challengeWindow`, `executeMint` needs only `block.timestamp >= eta`, and
+`challengeMint` has no time condition. A watcher that only reads *finalized* blocks sees a proposal
+two epochs (about 13 minutes) late, and not at all while Ethereum finality stalls (May 2023: about
+an hour), so a window shorter than its detection latency can never be challenged and a stall lets
+a rogue proposal execute unchallenged. Three answers, each independently sufficient against the
+second and together bounding the first: (1) the watcher reads `MintProposed` and `MintChallenged`
+at `latest` (Hawkeye, audit 05/H-2: a challenge signature binds `(lockId, proposalId)` and is
+harmless if its proposal reorgs out); (2) on mainnet the window is at least
+`MIN_MAINNET_CHALLENGE_WINDOW` = 2 hours (constructor, deploy script and Hawkeye's `check_bridge`
+all refuse less, §4.5.3); (3) on mainnet `mintCap` must be non-zero, so a proposal that does slip
+through mints at most a bounded amount per window. Hawkeye also alarms on a finality stall
+(`finalized` unchanged for three epochs) and stops its own proposals and `Mint` signatures until
+finality resumes; it never stops challenges.
 
 #### 4.5.3 Parameters
 
 | Parameter | Where | Constraint | Guidance |
 |---|---|---|---|
-| `challengeWindow` | constructor, immutable (a change is a successor bridge, §4) | > 0 seconds | longer than Ethereum finality (~13 min) plus the guardians' detection, lock check on Ycash and signing latency; a P8 parameter. Hawkeye's anvil runs use 60 s |
-| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash |
+| `challengeWindow` | constructor, immutable (a change is a successor bridge, §4) | > 0 seconds; **≥ `MIN_MAINNET_CHALLENGE_WINDOW` = 2 hours on mainnet** (constructor, script, Hawkeye) | longer than Ethereum finality (~13 min) plus the guardians' detection, lock check on Ycash and signing latency; a P8 parameter. Hawkeye's anvil runs use 60 s |
+| (mainnet floor) | `MIN_MAINNET_CHALLENGE_WINDOW` constant | 2 hours | derivation: a watcher keeps a quarter of the window as margin; the other three quarters cover two finality periods (2 × 768 s), 20 Ycash blocks of lock confirmation (20 × 75 s) and a 600 s submission margin, so ¾ W ≥ 3,636 s, W ≥ 4,848 s, rounded up. A floor, not a recommendation: the P8 value may be far larger |
+| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**not at construction on mainnet**: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. A quorum can still set 0 later through `setMintLimit` (it could raise the cap to 2²⁵⁶ anyway); Hawkeye alarms and stops its own mint-side acts on mainnet when it does |
 | `capWindow` | constructor; `setMintLimit` | > 0 when `mintCap > 0` | ≥ `challengeWindow`; e.g. one day |
-| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (above) | a majority |
+| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (constructor `MainnetThreshold`, script) | a majority |
 
 #### 4.5.4 Rate limit (E-6, resolved)
 
@@ -306,8 +322,8 @@ total: a quorum able to set the cap could raise it anyway. The total is not coun
 Measured on anvil (solc 0.8.37, 200 runs, transaction gas including the 21,000 base):
 `proposeMint` 128,346 (first proposal ever; a later one about 111,000), `challengeMint` 38,118
 (storage refund included), `executeMint` 134,406 (first mint ever, rate limit on; about 107,000
-typical). Deployed size 9,446 bytes (was 5,361; 10,015 with the §4.2 recipient check); the token
-is unchanged at 4,683.
+typical). Deployed size 9,446 bytes (was 5,361; 10,015 with the §4.2 recipient check, 10,035
+with the mainnet constructor floors); the token is unchanged at 4,683.
 
 ## 5. What is deliberately not in the contract
 
@@ -358,13 +374,16 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=100000000
 ```
 
 1. Fix the parameters (§4.5.3): the guardian set registered on Ycash at the bridge-enable height,
-   `THRESHOLD` (≥ 2 on mainnet; the script refuses less there), `CHALLENGE_WINDOW`, and
-   `MINT_CAP` / `CAP_WINDOW` (default 0 / 0: no limit).
+   `THRESHOLD` (≥ 2 on mainnet), `CHALLENGE_WINDOW` (≥ 2 hours on mainnet), and
+   `MINT_CAP` / `CAP_WINDOW` (default 0 / 0: no limit; on mainnet a cap is required). The script
+   and the constructor both refuse a mainnet configuration below these floors.
 2. Run the script from a fresh deployer; it writes `deployments/<chainid>.json` (bridge, token,
    first possible block, parameters). Commit it for a public network.
-3. Each guardian reads back `guardians`, `threshold`, `challengeWindow`, `mintCap`, `capWindow`,
-   `token.bridge()` and `bridge.token()` before signing anything for the deployment.
+3. Each guardian reads back `guardians`, `threshold`, `challengeWindow`,
+   `MIN_MAINNET_CHALLENGE_WINDOW`, `mintCap`, `capWindow`, `token.bridge()` and `bridge.token()`
+   before signing anything for the deployment.
 
-Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 10,015 bytes deployed (5,361
-before §4.5, 9,446 before the §4.2 recipient check), `WrappedYcash` 4,683 bytes; the EIP-170 limit
+Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 10,035 bytes deployed (5,361
+before §4.5, 9,446 before the §4.2 recipient check, 10,015 before the mainnet constructor floors),
+`WrappedYcash` 4,683 bytes; the EIP-170 limit
 is 24,576.

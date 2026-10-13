@@ -38,3 +38,11 @@ jobs:
         run: forge build --sizes
       - name: forge test
         run: forge test -vvv
+      - name: no bare vm.expectRevert()
+        # A negative test asserts the selector (and arguments): a bare expectRevert passes on any
+        # revert, an ABI decoding error or an unrelated require included.
+        run: |
+          if grep -rn "vm.expectRevert();" test/; then
+            echo "bare expectRevert is not allowed; assert the selector" >&2
+            exit 1
+          fi
