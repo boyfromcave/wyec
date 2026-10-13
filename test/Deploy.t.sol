@@ -94,6 +94,37 @@ contract DeployScriptTest is Test {
         vm.removeFile(file);
     }
 
+    /// A successor deployment (design §4.6): a new bridge over the old one's token, reading the
+    /// old bridge's consumed lockIds; no new token; the file records the predecessor.
+    function test_Deploy_Successor() public {
+        Deploy d = new Deploy();
+        Deploy.Config memory c = config("first");
+        string memory f1 = c.file;
+        Deploy.Result memory r = d.deploy(c);
+        vm.removeFile(f1);
+        Deploy.Config memory s = config("successor");
+        s.oldBridge = r.bridge;
+        s.predecessor = r.bridge;
+        string memory f2 = s.file;
+        Deploy.Result memory r2 = d.deploy(s);
+        assertEq(r2.token, r.token, "the old token");
+        assertTrue(r2.bridge != r.bridge);
+        assertEq(address(WyecBridge(r2.bridge).predecessor()), r.bridge);
+        assertEq(WrappedYcash(r.token).bridge(), r.bridge, "the hand-off is the guardians' act");
+        string memory j = vm.readFile(f2);
+        vm.removeFile(f2);
+        assertEq(j.readAddress(".predecessor"), r.bridge);
+        // a successor needs the old bridge to be the token's current one, and a predecessor
+        s = config("successor");
+        s.oldBridge = r.bridge;
+        vm.expectRevert(bytes("a successor needs a PREDECESSOR"));
+        d.deploy(s);
+        s = config("bad");
+        s.predecessor = r.bridge;
+        vm.expectRevert(bytes("PREDECESSOR without OLD_BRIDGE"));
+        d.deploy(s);
+    }
+
     function test_Deploy_BadConfigRejected() public {
         Deploy d = new Deploy();
         Deploy.Config memory c = config("bad");

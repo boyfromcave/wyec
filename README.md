@@ -47,3 +47,8 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=0 CAP_WIN
 
 Parameters and the mainnet requirements (`THRESHOLD >= 2`, `CHALLENGE_WINDOW >= 7200`, `MINT_CAP > 0`,
 enforced by the constructor and the script on chain id 1): design §4.5.3 and §8.
+
+A **successor bridge** (the only upgrade path) is deployed over the old token with
+`OLD_BRIDGE=<old bridge>` (and `PREDECESSOR`, default the old bridge): it inherits the old
+bridge's consumed lockIds through `isConsumed`, so no lock mints twice across a migration; the
+guardians then sign `setBridge` on the old bridge. Design §4.6.

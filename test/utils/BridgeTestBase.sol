@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {WrappedYcash} from "../../contracts/WrappedYcash.sol";
-import {IWrappedYcash, WyecBridge} from "../../contracts/WyecBridge.sol";
+import {IWrappedYcash, IWyecBridgeConsumed, WyecBridge} from "../../contracts/WyecBridge.sol";
 import {WyecEip712} from "./WyecEip712.sol";
 
 /// Shared fixture: a token + bridge deployed in the order of wyec-contract-design.md §8 (bridge
@@ -12,6 +12,8 @@ import {WyecEip712} from "./WyecEip712.sol";
 /// window and no rate limit; signing helpers for every EIP-712 struct.
 abstract contract BridgeTestBase is Test {
     uint64 internal constant WINDOW = 3600;
+    /// A first deployment: no predecessor bridge (design §4.6).
+    IWyecBridgeConsumed internal constant NO_PREDECESSOR = IWyecBridgeConsumed(address(0));
 
     WrappedYcash internal token;
     WyecBridge internal bridge;
@@ -66,7 +68,13 @@ abstract contract BridgeTestBase is Test {
     ) internal returns (WrappedYcash t, WyecBridge b) {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         b = new WyecBridge(
-            IWrappedYcash(predicted), guardians, threshold, challengeWindow, mintCap, capWindow
+            IWrappedYcash(predicted),
+            guardians,
+            threshold,
+            challengeWindow,
+            mintCap,
+            capWindow,
+            NO_PREDECESSOR
         );
         t = new WrappedYcash(address(b));
         assertEq(address(t), predicted, "token prediction");

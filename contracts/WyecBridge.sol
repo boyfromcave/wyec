@@ -13,6 +13,12 @@ interface IWrappedYcash is IERC7802 {
     function setBridge(address newBridge) external;
 }
 
+/// @notice What a successor reads from the bridge it succeeded (design §4.6): whether a lockId
+///         has minted there (or, recursively, on any bridge before it).
+interface IWyecBridgeConsumed {
+    function isConsumed(bytes32 lockId) external view returns (bool);
+}
+
 /**
  * @title WyecBridge
  * @notice The wYEC bridge: all policy for minting and burning Wrapped Ycash (upgrade plan §4.3,
@@ -104,8 +110,14 @@ contract WyecBridge is EIP712, Pausable {
     /// @notice Signatures needed by `mint` and by every admin act.
     uint8 public threshold;
 
-    /// @notice lockIds that have minted (by either path). Never cleared.
+    /// @notice lockIds that have minted on this bridge (by either path). Never cleared. A lockId
+    ///         consumed on a predecessor is consumed here too: see `isConsumed`.
     mapping(bytes32 lockId => bool) public consumed;
+    /// @notice The bridge this one succeeded (design §4.6), or address(0) for the first. Its
+    ///         consumed lockIds are consumed here too, recursively, so a lock never mints twice
+    ///         across a migration. A generation-0 bridge (no `isConsumed`) is read through a
+    ///         `ConsumedView` adapter.
+    IWyecBridgeConsumed public immutable predecessor;
     /// @notice Next `BurnToYcash` nonce.
     uint256 public burnNonce;
     /// @notice Nonce bound into every admin act's signed struct; shared by all admin acts.
@@ -198,13 +210,16 @@ contract WyecBridge is EIP712, Pausable {
     /// @param mintCap_         initial rate limit per window in base units; 0 = no limit (not on
     ///                         mainnet)
     /// @param capWindow_       initial window length in seconds; > 0 when `mintCap_ != 0`
+    /// @param predecessor_     the bridge this one succeeds (its consumed lockIds stay consumed),
+    ///                         or address(0) for the first deployment
     constructor(
         IWrappedYcash token_,
         address[] memory guardians_,
         uint8 threshold_,
         uint64 challengeWindow_,
         uint256 mintCap_,
-        uint256 capWindow_
+        uint256 capWindow_,
+        IWyecBridgeConsumed predecessor_
     ) EIP712("WyecBridge", "1") {
         if (challengeWindow_ == 0) revert ZeroChallengeWindow();
         if (block.chainid == 1) {
@@ -216,8 +231,16 @@ contract WyecBridge is EIP712, Pausable {
         }
         token = token_;
         challengeWindow = challengeWindow_;
+        predecessor = predecessor_;
         _setGuardians(guardians_, threshold_);
         _setMintLimit(mintCap_, capWindow_);
+    }
+
+    /// @notice Whether `lockId` has minted on this bridge or on any bridge before it (design
+    ///         §4.6). Every mint path checks this, not `consumed` alone.
+    function isConsumed(bytes32 lockId) public view returns (bool) {
+        if (consumed[lockId]) return true;
+        return address(predecessor) != address(0) && predecessor.isConsumed(lockId);
     }
 
     // ---------------------------------------------------------------- mint: threshold path
@@ -227,7 +250,7 @@ contract WyecBridge is EIP712, Pausable {
     /// @param sigs signatures over the EIP-712 `Mint(lockId, amount, to)` digest, ordered by strictly
     ///        ascending recovered address
     function mint(bytes32 lockId, uint256 amount, address to, bytes[] calldata sigs) external whenNotPaused {
-        if (consumed[lockId]) revert LockConsumed(lockId);
+        if (isConsumed(lockId)) revert LockConsumed(lockId);
         _checkThreshold(mintDigest(lockId, amount, to), sigs);
         if (proposals[lockId].id != 0) delete proposals[lockId];
         _mint(lockId, amount, to);
@@ -245,7 +268,7 @@ contract WyecBridge is EIP712, Pausable {
         whenNotPaused
         returns (uint256 proposalId)
     {
-        if (consumed[lockId]) revert LockConsumed(lockId);
+        if (isConsumed(lockId)) revert LockConsumed(lockId);
         if (to == address(0)) revert ZeroRecipient();
         if (amount == 0) revert ZeroAmount();
         Proposal storage p = proposals[lockId];
@@ -288,7 +311,9 @@ contract WyecBridge is EIP712, Pausable {
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < p.eta) revert ChallengeWindowOpen(p.eta);
         if (!isGuardian[p.proposer]) revert ProposerNotGuardian(p.proposer);
-        // Invariant: a lockId with a proposal is never consumed (propose checks; mint clears).
+        // Invariant: a lockId with a proposal is never consumed here (propose checks, including
+        // the predecessor's; mint clears). A predecessor still live while this bridge was
+        // deployed could have minted it since: `_mint` re-checks `isConsumed`.
         delete proposals[lockId];
         _mint(lockId, p.amount, p.to);
     }
@@ -409,6 +434,9 @@ contract WyecBridge is EIP712, Pausable {
 
     /// Consumes `lockId`, applies the rate limit and mints. The caller has checked authorisation.
     function _mint(bytes32 lockId, uint256 amount, address to) internal {
+        // Every path ends here: a lockId consumed here or on any predecessor never mints again
+        // (design §4.6; also covers a proposal opened before the predecessor minted the lock).
+        if (isConsumed(lockId)) revert LockConsumed(lockId);
         consumed[lockId] = true;
         uint256 cap = mintCap;
         if (cap != 0) {

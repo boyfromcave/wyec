@@ -323,7 +323,46 @@ Measured on anvil (solc 0.8.37, 200 runs, transaction gas including the 21,000 b
 `proposeMint` 128,346 (first proposal ever; a later one about 111,000), `challengeMint` 38,118
 (storage refund included), `executeMint` 134,406 (first mint ever, rate limit on; about 107,000
 typical). Deployed size 9,446 bytes (was 5,361; 10,015 with the §4.2 recipient check, 10,035
-with the mainnet constructor floors); the token is unchanged at 4,683.
+with the mainnet constructor floors, 10,393 with the §4.6 predecessor); the token is unchanged at
+4,683.
+
+### 4.6 Migration to a successor (audit 05/L-3)
+
+`setBridge` hands the token's mint/burn right to a new bridge; the old bridge's state stays
+behind. Without help a successor would start with an empty `consumed` mapping, and every lockId
+that ever minted could be minted again by a fresh quorum signing for the new domain (old
+signatures do not replay: the EIP-712 domain binds the bridge's address). So the successor
+carries its predecessor:
+
+- `predecessor` (constructor argument, **immutable**; `address(0)` for the first deployment) and
+  `isConsumed(lockId)` = this bridge's `consumed[lockId]` or `predecessor.isConsumed(lockId)`,
+  recursive over a chain of bridges. `mint` and `proposeMint` check `isConsumed`, and `_mint`
+  re-checks it, so a proposal opened on the successor while the predecessor was still the token's
+  bridge cannot execute a lock the predecessor minted meanwhile. Cost: one `STATICCALL` per
+  predecessor per mint (about 4,000 gas for one), nothing for a first deployment.
+- A **generation-0** bridge (deployed before `isConsumed` existed: only the `consumed(bytes32)`
+  getter) is read through `contracts/ConsumedView.sol`, deployed once, passed as `PREDECESSOR`.
+  None is deployed on mainnet.
+- Rejected: a threshold-signed `importConsumed(lockIds[])` (O(n) over the history, partial or
+  wrong imports possible, nothing stops a missing id) and `consumed` in the token (policy in the
+  token, the one rule §4 keeps).
+
+The order:
+
+1. Deploy the successor over the **old token** (`script/Deploy.s.sol` with `OLD_BRIDGE` set, and
+   `PREDECESSOR` = `OLD_BRIDGE`, or its `ConsumedView` for generation 0): no new token; the
+   deployment file records `predecessor`.
+2. Guardians re-read the successor (§8 step 3, plus `predecessor` and `token()`).
+3. The guardians sign `SetBridge(newBridge, adminNonce)` on the **old** bridge (the script prints
+   it); after `setBridge` the old bridge can neither mint nor burn (`NotBridge`). Its pending
+   proposals are void without a challenge: they cannot execute. Hawkeye re-proposes them on the
+   successor (its sign-once `Mint` record is per deployment, one `(amount, to)` per lock ever).
+4. Attestors switch `[eth] deployment` to the new file in one maintenance window.
+
+What carries over: `consumed`, by the view. Nothing else: `adminNonce` and `burnNonce` restart
+at 0 (Hawkeye keys burns by `(chainId, bridge, nonce)`, so nonces cannot collide), the guardian
+set, threshold, `challengeWindow` and the rate limit are the successor's constructor arguments.
+This is also how `challengeWindow` (immutable) or the threshold rules change.
 
 ## 5. What is deliberately not in the contract
 
@@ -350,13 +389,14 @@ with the mainnet constructor floors); the token is unchanged at 4,683.
 
 - The 2021 WRY contract stays in its own repository (boyfromcave/wry) as the deployed reference.
 - `contracts/WrappedYcash.sol`: the token (§4).
-- `contracts/WyecBridge.sol`: the bridge (§4.1-4.5).
+- `contracts/WyecBridge.sol`: the bridge (§4.1-4.6).
+- `contracts/ConsumedView.sol`: the generation-0 predecessor adapter (§4.6).
 - `foundry.toml`, `package.json`, `package-lock.json`: the Foundry project; OpenZeppelin 5.6.1 and
   forge-std (v1.17.0, commit `f3dae6e`) are exact-pinned npm dependencies.
 - `tools/solc`, `tools/solc-shim.js`: a native-`solc` stand-in over the pinned solc-js 0.8.37,
   for machines where Foundry cannot download the compiler (`FOUNDRY_SOLC=./tools/solc`).
 - `script/Deploy.s.sol`: the deployment (§8).
-- `test/`: the Foundry tests (threshold path, optimistic mint, rate limit, deployment).
+- `test/`: the Foundry tests (threshold path, optimistic mint, rate limit, deployment, successor).
 - `deployments/<chainid>.json`: written by the deployment; public networks' files are committed.
 
 ## 8. Deployment order
@@ -383,7 +423,9 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=100000000
    `MIN_MAINNET_CHALLENGE_WINDOW`, `mintCap`, `capWindow`, `token.bridge()` and `bridge.token()`
    before signing anything for the deployment.
 
-Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 10,035 bytes deployed (5,361
-before §4.5, 9,446 before the §4.2 recipient check, 10,015 before the mainnet constructor floors),
-`WrappedYcash` 4,683 bytes; the EIP-170 limit
+A successor deployment is §4.6.
+
+Sizes (forge v1.7.1, solc 0.8.37, optimizer 200 runs): `WyecBridge` 10,393 bytes deployed (5,361
+before §4.5, 9,446 before the §4.2 recipient check, 10,015 before the mainnet constructor floors,
+10,035 before the §4.6 predecessor), `ConsumedView` 417, `WrappedYcash` 4,683 bytes; the EIP-170 limit
 is 24,576.
