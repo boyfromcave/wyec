@@ -118,4 +118,50 @@ contract SuccessorTest is BridgeTestBase {
         assertGt(succ, plain, "the predecessor read costs something");
         assertLt(succ, plain + 10_000, "one STATICCALL and a cold SLOAD there");
     }
+
+    function expectBadSuccessor(address bad) internal {
+        bytes32 d = WyecEip712.digest(
+            domainOf(address(bridge)), WyecEip712.setBridgeStruct(bad, bridge.adminNonce())
+        );
+        bytes[] memory sigs = signSorted(guardianPair(), d);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.BadSuccessor.selector, bad));
+        bridge.setBridge(bad, sigs);
+        assertEq(bridge.adminNonce(), 0);
+        assertEq(token.bridge(), address(bridge));
+    }
+
+    function test_SetBridge_RejectsSuccessorWithoutPredecessor() public {
+        expectBadSuccessor(address(successor(IWyecBridgeConsumed(address(0)))));
+    }
+
+    function test_SetBridge_RejectsWrongPredecessor() public {
+        WyecBridge other = successor(IWyecBridgeConsumed(address(0)));
+        expectBadSuccessor(address(successor(IWyecBridgeConsumed(address(other)))));
+        ConsumedView v = new ConsumedView(IConsumedGetter(address(other)));
+        expectBadSuccessor(address(successor(v)));
+    }
+
+    function test_SetBridge_RejectsOtherToken() public {
+        (, WyecBridge otherBridge) = deployPair(guardianAddrs, 2);
+        WyecBridge b = new WyecBridge(
+            IWrappedYcash(address(otherBridge.token())),
+            guardianAddrs,
+            2,
+            WINDOW,
+            0,
+            0,
+            IWyecBridgeConsumed(address(bridge))
+        );
+        expectBadSuccessor(address(b));
+    }
+
+    function test_SetBridge_RejectsEOAAndNonBridgeContract() public {
+        expectBadSuccessor(makeAddr("eoa"));
+        expectBadSuccessor(address(token));
+    }
+
+    function test_SetBridge_AcceptsConsumedViewOverThis() public {
+        ConsumedView v = new ConsumedView(IConsumedGetter(address(bridge)));
+        handOff(bridge, address(successor(v)));
+    }
 }

@@ -119,6 +119,11 @@ contract DeployScriptTest is Test {
         s.oldBridge = r.bridge;
         vm.expectRevert(bytes("a successor needs a PREDECESSOR"));
         d.deploy(s);
+        s = config("successor");
+        s.oldBridge = r.bridge;
+        s.predecessor = makeAddr("elsewhere");
+        vm.expectRevert(bytes("PREDECESSOR must be OLD_BRIDGE or a ConsumedView over it"));
+        d.deploy(s);
         s = config("bad");
         s.predecessor = r.bridge;
         vm.expectRevert(bytes("PREDECESSOR without OLD_BRIDGE"));

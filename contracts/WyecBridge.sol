@@ -19,6 +19,18 @@ interface IWyecBridgeConsumed {
     function isConsumed(bytes32 lockId) external view returns (bool);
 }
 
+/// @notice What `setBridge` reads from a successor (design §4.6): the bridge it reads consumed
+///         lockIds from, and the token it bridges.
+interface IWyecBridgeSuccessor {
+    function predecessor() external view returns (address);
+    function token() external view returns (address);
+}
+
+/// @notice The `ConsumedView` getter `setBridge` follows when a successor's predecessor is an adapter.
+interface IConsumedViewBridge {
+    function bridge() external view returns (address);
+}
+
 /**
  * @title WyecBridge
  * @notice The wYEC bridge: all policy for minting and burning Wrapped Ycash (upgrade plan §4.3,
@@ -164,6 +176,9 @@ contract WyecBridge is EIP712, Pausable {
     event MintChallenged(bytes32 indexed lockId, uint256 indexed proposalId, address indexed challenger);
 
     /// @notice Empty set, zero/duplicate member, or threshold 0 or above the set size.
+    /// @notice `setBridge`'s successor does not read this bridge as its predecessor or does not
+    ///         bridge this token.
+    error BadSuccessor(address newBridge);
     error BadGuardianSet();
     /// @notice The lockId has already minted.
     error LockConsumed(bytes32 lockId);
@@ -382,13 +397,37 @@ contract WyecBridge is EIP712, Pausable {
     }
 
     /// @notice Retires this bridge in favour of a successor. After this call nothing here can mint
-    ///         or burn.
+    ///         or burn. The successor must bridge this token and read this bridge as its
+    ///         `predecessor` (directly or through a `ConsumedView` over it), else `BadSuccessor`.
     /// @param sigs threshold over `SetBridge(newBridge, adminNonce)`
     function setBridge(address newBridge, bytes[] calldata sigs) external {
         _checkThreshold(
             _hashTypedDataV4(keccak256(abi.encode(SET_BRIDGE_TYPEHASH, newBridge, adminNonce++))), sigs
         );
+        _checkSuccessor(newBridge);
         token.setBridge(newBridge);
+    }
+
+    function _checkSuccessor(address s) internal view {
+        if (s.code.length == 0) revert BadSuccessor(s);
+        try IWyecBridgeSuccessor(s).token() returns (address t) {
+            if (t != address(token)) revert BadSuccessor(s);
+        } catch {
+            revert BadSuccessor(s);
+        }
+        address p;
+        try IWyecBridgeSuccessor(s).predecessor() returns (address q) {
+            p = q;
+        } catch {
+            revert BadSuccessor(s);
+        }
+        if (p == address(this)) return;
+        if (p.code.length != 0) {
+            try IConsumedViewBridge(p).bridge() returns (address b) {
+                if (b == address(this)) return;
+            } catch {}
+        }
+        revert BadSuccessor(s);
     }
 
     // ---------------------------------------------------------------- views

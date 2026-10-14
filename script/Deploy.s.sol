@@ -3,7 +3,12 @@ pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {WrappedYcash} from "../contracts/WrappedYcash.sol";
-import {IWrappedYcash, IWyecBridgeConsumed, WyecBridge} from "../contracts/WyecBridge.sol";
+import {
+    IConsumedViewBridge,
+    IWrappedYcash,
+    IWyecBridgeConsumed,
+    WyecBridge
+} from "../contracts/WyecBridge.sol";
 
 /// Deploys wYEC in the order of docs/wyec-contract-design.md §8: the bridge first, constructed
 /// with the token address predicted from the deployer's next nonce, then the token in the very
@@ -121,6 +126,10 @@ contract Deploy is Script {
         WrappedYcash token = WrappedYcash(address(WyecBridge(c.oldBridge).token()));
         require(token.bridge() == c.oldBridge, "OLD_BRIDGE is not the token's current bridge");
         require(c.predecessor != address(0), "a successor needs a PREDECESSOR");
+        require(
+            c.predecessor == c.oldBridge || viewsBridge(c.predecessor, c.oldBridge),
+            "PREDECESSOR must be OLD_BRIDGE or a ConsumedView over it"
+        );
         r.deployBlock = block.number + 1;
         vm.startBroadcast();
         // casting is safe: both bounds are required in deploy().
@@ -136,12 +145,22 @@ contract Deploy is Script {
         );
         vm.stopBroadcast();
         require(address(bridge.predecessor()) == c.predecessor, "predecessor mismatch");
+        require(address(bridge.token()) == address(token), "token mismatch");
         r.bridge = address(bridge);
         r.token = address(token);
         write(c, r);
         console.log("next: guardians sign on OLD_BRIDGE", c.oldBridge);
         console.log("  SetBridge(address newBridge,uint256 adminNonce) newBridge", r.bridge);
         console.log("  adminNonce", WyecBridge(c.oldBridge).adminNonce());
+    }
+
+    function viewsBridge(address adapter, address bridge) internal view returns (bool) {
+        if (adapter.code.length == 0) return false;
+        try IConsumedViewBridge(adapter).bridge() returns (address b) {
+            return b == bridge;
+        } catch {
+            return false;
+        }
     }
 
     function write(Config memory c, Result memory r) internal {
