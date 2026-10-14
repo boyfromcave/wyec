@@ -22,6 +22,7 @@ contract DeployScriptTest is Test {
         c.challengeWindow = 3600;
         c.mintCap = 1000e8;
         c.capWindow = 1 days;
+        c.maxOpenProposals = 8;
         c.file = string.concat(vm.projectRoot(), "/deployments/.test-", name, ".json");
     }
 
@@ -37,6 +38,7 @@ contract DeployScriptTest is Test {
         assertEq(b.challengeWindow(), 3600);
         assertEq(b.mintCap(), 1000e8);
         assertEq(b.capWindow(), 1 days);
+        assertEq(b.maxOpenProposals(), 8);
 
         string memory j = vm.readFile(file);
         vm.removeFile(file);
@@ -48,6 +50,7 @@ contract DeployScriptTest is Test {
         assertEq(j.readUint(".challengeWindow"), 3600);
         assertEq(j.readUint(".mintCap"), 1000e8);
         assertEq(j.readUint(".capWindow"), 1 days);
+        assertEq(j.readUint(".maxOpenProposals"), 8);
         address[] memory g = j.readAddressArray(".guardians");
         assertEq(g.length, 3);
         assertEq(g[2], 0x90F79bf6EB2c4f870365E785982E1f101E93b906);
@@ -84,6 +87,12 @@ contract DeployScriptTest is Test {
         c.mintCap = 0;
         c.capWindow = 0;
         vm.expectRevert(bytes("MINT_CAP is required on mainnet"));
+        d.deploy(c);
+
+        c = config("mainnet-floors");
+        c.challengeWindow = 2 hours;
+        c.maxOpenProposals = 0;
+        vm.expectRevert(bytes("MAX_OPEN_PROPOSALS is required on mainnet"));
         d.deploy(c);
 
         c = config("mainnet-floors");

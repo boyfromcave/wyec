@@ -52,15 +52,15 @@ contract WyecBridgeTest is BridgeTestBase {
         g[0] = address(1);
         g[1] = address(2);
         vm.expectRevert(WyecBridge.BadGuardianSet.selector);
-        new WyecBridge(IWrappedYcash(address(token)), g, 0, WINDOW, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), g, 0, WINDOW, 0, 0, 0, NO_PREDECESSOR);
         vm.expectRevert(WyecBridge.BadGuardianSet.selector);
-        new WyecBridge(IWrappedYcash(address(token)), g, 3, WINDOW, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), g, 3, WINDOW, 0, 0, 0, NO_PREDECESSOR);
         g[1] = address(1);
         vm.expectRevert(WyecBridge.BadGuardianSet.selector);
-        new WyecBridge(IWrappedYcash(address(token)), g, 1, WINDOW, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), g, 1, WINDOW, 0, 0, 0, NO_PREDECESSOR);
         g[1] = address(0);
         vm.expectRevert(WyecBridge.BadGuardianSet.selector);
-        new WyecBridge(IWrappedYcash(address(token)), g, 1, WINDOW, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), g, 1, WINDOW, 0, 0, 0, NO_PREDECESSOR);
     }
 
     /// Mainnet (chain id 1) floors in the constructor: threshold >= 2, challengeWindow >= 2 hours,
@@ -70,22 +70,25 @@ contract WyecBridgeTest is BridgeTestBase {
         assertEq(bridge.MIN_MAINNET_CHALLENGE_WINDOW(), 2 hours);
         vm.chainId(1);
         vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetChallengeWindow.selector, uint64(1 hours)));
-        new WyecBridge(t, guardianAddrs, 2, 1 hours, 5e8, 1 days, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 2, 1 hours, 5e8, 1 days, 0, NO_PREDECESSOR);
         vm.expectRevert(
             abi.encodeWithSelector(WyecBridge.MainnetChallengeWindow.selector, uint64(2 hours - 1))
         );
-        new WyecBridge(t, guardianAddrs, 2, 2 hours - 1, 5e8, 1 days, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 2, 2 hours - 1, 5e8, 1 days, 0, NO_PREDECESSOR);
         vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetThreshold.selector, uint8(1)));
-        new WyecBridge(t, guardianAddrs, 1, 2 hours, 5e8, 1 days, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 1, 2 hours, 5e8, 1 days, 0, NO_PREDECESSOR);
         vm.expectRevert(WyecBridge.MainnetMintCapRequired.selector);
-        new WyecBridge(t, guardianAddrs, 2, 2 hours, 0, 0, NO_PREDECESSOR);
-        WyecBridge b = new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 2, 2 hours, 0, 0, 0, NO_PREDECESSOR);
+        vm.expectRevert(WyecBridge.MainnetOpenProposalCapRequired.selector);
+        new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days, 0, NO_PREDECESSOR);
+        WyecBridge b = new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days, 32, NO_PREDECESSOR);
         assertEq(b.challengeWindow(), 2 hours);
+        assertEq(b.maxOpenProposals(), 32);
         assertEq(b.mintCap(), 5e8);
 
         // Off mainnet the floors do not apply (tests and devnets run 60-second windows, no cap).
         vm.chainId(11155111);
-        b = new WyecBridge(t, guardianAddrs, 1, 60, 0, 0, NO_PREDECESSOR);
+        b = new WyecBridge(t, guardianAddrs, 1, 60, 0, 0, 0, NO_PREDECESSOR);
         assertEq(b.challengeWindow(), 60);
     }
 
@@ -96,7 +99,7 @@ contract WyecBridgeTest is BridgeTestBase {
         emit GuardiansChanged(g, 1);
         vm.expectEmit(false, false, false, true);
         emit MintLimitChanged(5e8, 60);
-        WyecBridge b = new WyecBridge(IWrappedYcash(address(token)), g, 1, 77, 5e8, 60, NO_PREDECESSOR);
+        WyecBridge b = new WyecBridge(IWrappedYcash(address(token)), g, 1, 77, 5e8, 60, 0, NO_PREDECESSOR);
         assertEq(b.challengeWindow(), 77);
         assertEq(b.mintCap(), 5e8);
         assertEq(b.capWindow(), 60);
@@ -108,14 +111,14 @@ contract WyecBridgeTest is BridgeTestBase {
 
     function test_Constructor_ZeroChallengeWindowRejected() public {
         vm.expectRevert(WyecBridge.ZeroChallengeWindow.selector);
-        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, 0, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, 0, 0, 0, 0, NO_PREDECESSOR);
     }
 
     function test_Constructor_CapWithoutWindowRejected() public {
         vm.expectRevert(WyecBridge.BadMintLimit.selector);
-        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 1, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 1, 0, 0, NO_PREDECESSOR);
         // No cap: the window is irrelevant and may be zero (or anything).
-        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 0, 0, 0, NO_PREDECESSOR);
     }
 
     /// The contract's digest helpers agree with the independent encoding in WyecEip712.

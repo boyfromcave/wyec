@@ -16,7 +16,7 @@ contract SuccessorTest is BridgeTestBase {
 
     /// A successor of `pred` over the base fixture's token, same guardians, threshold 2.
     function successor(IWyecBridgeConsumed pred) internal returns (WyecBridge) {
-        return new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 0, 0, pred);
+        return new WyecBridge(IWrappedYcash(address(token)), guardianAddrs, 2, WINDOW, 0, 0, 0, pred);
     }
 
     /// `from.setBridge(to)` signed by guardians 0 and 1.

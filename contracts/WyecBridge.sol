@@ -133,6 +133,14 @@ contract WyecBridge is EIP712, Pausable {
     ///         guardian is rotated out. Other guardians (or the threshold path) can still mint it.
     mapping(bytes32 lockId => mapping(address proposer => bool)) public vetoed;
 
+    /// @notice The most proposals one proposer may have open at once (audit W3-B-3); 0 = no limit
+    ///         (not on mainnet). A proposal is open from `proposeMint` until it is executed,
+    ///         challenged, cleared by `mint`, or replaced after its proposer was rotated out.
+    uint256 public immutable maxOpenProposals;
+    /// @notice Open proposals per proposer: `openProposals[a]` is always the number of lockIds
+    ///         whose proposal has `proposer == a`.
+    mapping(address proposer => uint256) public openProposals;
+
     /// @notice Most wYEC base units both mint paths together may mint per window; 0 = no limit.
     uint256 public mintCap;
     /// @notice Rate-limit window length in seconds; windows are `block.timestamp / capWindow`.
@@ -183,6 +191,10 @@ contract WyecBridge is EIP712, Pausable {
     error MainnetChallengeWindow(uint64 challengeWindow);
     /// @notice Mainnet construction with `mintCap == 0` (an unbounded rate limit).
     error MainnetMintCapRequired();
+    /// @notice Mainnet construction with `maxOpenProposals == 0` (unbounded proposal spam).
+    error MainnetOpenProposalCapRequired();
+    /// @notice `proposeMint` by a proposer already at `maxOpenProposals` open proposals.
+    error TooManyOpenProposals(address proposer, uint256 open);
     /// @notice `proposeMint` with `amount == 0`.
     error ZeroAmount();
     /// @notice `proposeMint` with `to == address(0)`.
@@ -210,6 +222,7 @@ contract WyecBridge is EIP712, Pausable {
     /// @param mintCap_         initial rate limit per window in base units; 0 = no limit (not on
     ///                         mainnet)
     /// @param capWindow_       initial window length in seconds; > 0 when `mintCap_ != 0`
+    /// @param maxOpenProposals_ most open proposals per proposer; 0 = no limit (not on mainnet)
     /// @param predecessor_     the bridge this one succeeds (its consumed lockIds stay consumed),
     ///                         or address(0) for the first deployment
     constructor(
@@ -219,6 +232,7 @@ contract WyecBridge is EIP712, Pausable {
         uint64 challengeWindow_,
         uint256 mintCap_,
         uint256 capWindow_,
+        uint256 maxOpenProposals_,
         IWyecBridgeConsumed predecessor_
     ) EIP712("WyecBridge", "1") {
         if (challengeWindow_ == 0) revert ZeroChallengeWindow();
@@ -228,7 +242,9 @@ contract WyecBridge is EIP712, Pausable {
                 revert MainnetChallengeWindow(challengeWindow_);
             }
             if (mintCap_ == 0) revert MainnetMintCapRequired();
+            if (maxOpenProposals_ == 0) revert MainnetOpenProposalCapRequired();
         }
+        maxOpenProposals = maxOpenProposals_;
         token = token_;
         challengeWindow = challengeWindow_;
         predecessor = predecessor_;
@@ -252,7 +268,7 @@ contract WyecBridge is EIP712, Pausable {
     function mint(bytes32 lockId, uint256 amount, address to, bytes[] calldata sigs) external whenNotPaused {
         if (isConsumed(lockId)) revert LockConsumed(lockId);
         _checkThreshold(mintDigest(lockId, amount, to), sigs);
-        if (proposals[lockId].id != 0) delete proposals[lockId];
+        _closeProposal(lockId);
         _mint(lockId, amount, to);
     }
 
@@ -276,6 +292,10 @@ contract WyecBridge is EIP712, Pausable {
         address signer = ECDSA.recover(mintDigest(lockId, amount, to), sig);
         if (!isGuardian[signer]) revert NotGuardian(signer);
         if (vetoed[lockId][signer]) revert ProposerVetoed(lockId, signer);
+        if (p.id != 0) openProposals[p.proposer] -= 1;
+        uint256 open = openProposals[signer];
+        if (maxOpenProposals != 0 && open >= maxOpenProposals) revert TooManyOpenProposals(signer, open);
+        openProposals[signer] = open + 1;
 
         uint96 id = ++proposalCount;
         uint64 eta = uint64(block.timestamp) + challengeWindow;
@@ -296,7 +316,7 @@ contract WyecBridge is EIP712, Pausable {
         address signer = ECDSA.recover(challengeDigest(lockId, proposalId), sig);
         if (!isGuardian[signer]) revert NotGuardian(signer);
         vetoed[lockId][proposals[lockId].proposer] = true;
-        delete proposals[lockId];
+        _closeProposal(lockId);
         emit MintChallenged(lockId, proposalId, signer);
     }
 
@@ -314,7 +334,7 @@ contract WyecBridge is EIP712, Pausable {
         // Invariant: a lockId with a proposal is never consumed here (propose checks, including
         // the predecessor's; mint clears). A predecessor still live while this bridge was
         // deployed could have minted it since: `_mint` re-checks `isConsumed`.
-        delete proposals[lockId];
+        _closeProposal(lockId);
         _mint(lockId, p.amount, p.to);
     }
 
@@ -449,6 +469,14 @@ contract WyecBridge is EIP712, Pausable {
         }
         token.crosschainMint(to, amount);
         emit Minted(lockId, to, amount);
+    }
+
+    /// Deletes the proposal for `lockId`, if any, and releases its proposer's open slot.
+    function _closeProposal(bytes32 lockId) internal {
+        Proposal storage p = proposals[lockId];
+        if (p.id == 0) return;
+        openProposals[p.proposer] -= 1;
+        delete proposals[lockId];
     }
 
     function _setGuardians(address[] memory guardians_, uint8 threshold_) internal {
