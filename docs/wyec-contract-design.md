@@ -302,6 +302,7 @@ finality resumes; it never stops challenges.
 | `challengeWindow` | constructor, immutable (a change is a successor bridge, §4) | > 0 seconds; **≥ `MIN_MAINNET_CHALLENGE_WINDOW` = 2 hours on mainnet** (constructor, script, Hawkeye) | longer than Ethereum finality (~13 min) plus the guardians' detection, lock check on Ycash and signing latency; a P8 parameter. Hawkeye's anvil runs use 60 s |
 | (mainnet floor) | `MIN_MAINNET_CHALLENGE_WINDOW` constant | 2 hours | derivation: a watcher keeps a quarter of the window as margin; the other three quarters cover two finality periods (2 × 768 s), 20 Ycash blocks of lock confirmation (20 × 75 s) and a 600 s submission margin, so ¾ W ≥ 3,636 s, W ≥ 4,848 s, rounded up. A floor, not a recommendation: the P8 value may be far larger |
 | `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**never on mainnet**, at construction or through `setMintLimit`: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. Off mainnet a quorum can set 0 through `setMintLimit`; Hawkeye alarms and stops its own mint-side acts when the cap is 0 |
+| `maxOpenProposals` | constructor | most proposals one proposer may have open at once (`TooManyOpenProposals`); 0 = no limit (**not on mainnet**: `MainnetOpenProposalCapRequired`) | bounds what one compromised guardian key can open before the set pauses and rotates it out, so the watchers' challenges in flight are at most `maxOpenProposals` per rogue key (audit W3-B-3); an honest proposer at the cap uses the threshold path. Start from 32; the mainnet value is an owner decision at deployment |
 | `capWindow` | constructor; `setMintLimit` | > 0 when `mintCap > 0` | ≥ `challengeWindow`; e.g. one day |
 | `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (`MainnetThreshold`, in the constructor and in `setGuardians`; script) | a majority |
 
@@ -418,7 +419,8 @@ GUARDIANS=0x…,0x…,0x… THRESHOLD=2 CHALLENGE_WINDOW=3600 MINT_CAP=100000000
 
 1. Fix the parameters (§4.5.3): the guardian set registered on Ycash at the bridge-enable height,
    `THRESHOLD` (≥ 2 on mainnet), `CHALLENGE_WINDOW` (≥ 2 hours on mainnet), and
-   `MINT_CAP` / `CAP_WINDOW` (default 0 / 0: no limit; on mainnet a cap is required). The script
+   `MINT_CAP` / `CAP_WINDOW` (default 0 / 0: no limit; on mainnet a cap is required) and
+   `MAX_OPEN_PROPOSALS` (default 0: no limit; required on mainnet). The script
    and the constructor both refuse a mainnet configuration below these floors.
 2. Run the script from a fresh deployer; it writes `deployments/<chainid>.json` (bridge, token,
    first possible block, parameters). Commit it for a public network.

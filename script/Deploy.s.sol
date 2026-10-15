@@ -23,6 +23,8 @@ import {
 ///   MINT_CAP           mint rate limit in wYEC base units per CAP_WINDOW (default 0 = no limit;
 ///                      not on mainnet, where it is required)
 ///   CAP_WINDOW         rate-limit window in seconds (default 0; > 0 when MINT_CAP > 0)
+///   MAX_OPEN_PROPOSALS most proposals one proposer may have open (default 0 = no limit;
+///                      not on mainnet, where it is required)
 ///   DEPLOYMENT_FILE    output path (default deployments/<chainid>.json)
 ///   OLD_BRIDGE         a successor deployment (design §4.6): the bridge being succeeded. The new
 ///                      bridge drives OLD_BRIDGE's token (no new token is deployed), and the
@@ -48,6 +50,7 @@ contract Deploy is Script {
         uint256 challengeWindow;
         uint256 mintCap;
         uint256 capWindow;
+        uint256 maxOpenProposals;
         string file;
         /// A successor deployment: the bridge succeeded (address(0) for a first deployment).
         address oldBridge;
@@ -62,6 +65,7 @@ contract Deploy is Script {
         c.challengeWindow = vm.envUint("CHALLENGE_WINDOW");
         c.mintCap = vm.envOr("MINT_CAP", uint256(0));
         c.capWindow = vm.envOr("CAP_WINDOW", uint256(0));
+        c.maxOpenProposals = vm.envOr("MAX_OPEN_PROPOSALS", uint256(0));
         c.oldBridge = vm.envOr("OLD_BRIDGE", address(0));
         c.predecessor = vm.envOr("PREDECESSOR", c.oldBridge);
         c.file = vm.envOr(
@@ -87,6 +91,7 @@ contract Deploy is Script {
             "CHALLENGE_WINDOW must be >= 2 hours on mainnet"
         );
         require(block.chainid != 1 || c.mintCap > 0, "MINT_CAP is required on mainnet");
+        require(block.chainid != 1 || c.maxOpenProposals > 0, "MAX_OPEN_PROPOSALS is required on mainnet");
         require(c.mintCap == 0 || c.capWindow > 0, "CAP_WINDOW must be > 0 when MINT_CAP > 0");
 
         if (c.oldBridge != address(0)) return deploySuccessor(c);
@@ -105,6 +110,7 @@ contract Deploy is Script {
             uint64(c.challengeWindow),
             c.mintCap,
             c.capWindow,
+            c.maxOpenProposals,
             IWyecBridgeConsumed(address(0))
         );
         WrappedYcash token = new WrappedYcash(address(bridge));
@@ -147,6 +153,7 @@ contract Deploy is Script {
             uint64(c.challengeWindow),
             c.mintCap,
             c.capWindow,
+            c.maxOpenProposals,
             IWyecBridgeConsumed(c.predecessor)
         );
         vm.stopBroadcast();
@@ -189,6 +196,7 @@ contract Deploy is Script {
         vm.serializeUint(o, "threshold", c.threshold);
         vm.serializeUint(o, "challengeWindow", c.challengeWindow);
         vm.serializeUint(o, "mintCap", c.mintCap);
+        vm.serializeUint(o, "maxOpenProposals", c.maxOpenProposals);
         vm.serializeAddress(o, "predecessor", c.predecessor);
         string memory json = vm.serializeUint(o, "capWindow", c.capWindow);
         vm.writeJson(json, c.file);

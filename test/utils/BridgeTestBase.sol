@@ -74,6 +74,7 @@ abstract contract BridgeTestBase is Test {
             challengeWindow,
             mintCap,
             capWindow,
+            0,
             NO_PREDECESSOR
         );
         t = new WrappedYcash(address(b));

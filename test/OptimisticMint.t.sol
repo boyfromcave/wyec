@@ -397,6 +397,7 @@ contract OptimisticMintTest is BridgeTestBase {
                 WINDOW,
                 0,
                 0,
+                0,
                 IWyecBridgeConsumed(address(bridge))
             )
         );
