@@ -175,10 +175,10 @@ contract WyecBridge is EIP712, Pausable {
     /// @notice Guardian `challenger` signed `Challenge(lockId, proposalId)`; the proposal is deleted.
     event MintChallenged(bytes32 indexed lockId, uint256 indexed proposalId, address indexed challenger);
 
-    /// @notice Empty set, zero/duplicate member, or threshold 0 or above the set size.
     /// @notice `setBridge`'s successor does not read this bridge as its predecessor or does not
     ///         bridge this token.
     error BadSuccessor(address newBridge);
+    /// @notice Empty set, zero/duplicate member, or threshold 0 or above the set size.
     error BadGuardianSet();
     /// @notice The lockId has already minted.
     error LockConsumed(bytes32 lockId);
@@ -398,7 +398,8 @@ contract WyecBridge is EIP712, Pausable {
 
     /// @notice Retires this bridge in favour of a successor. After this call nothing here can mint
     ///         or burn. The successor must bridge this token and read this bridge as its
-    ///         `predecessor` (directly or through a `ConsumedView` over it), else `BadSuccessor`.
+    ///         `predecessor` (directly, or through a `ConsumedView` over it when this bridge has
+    ///         no predecessor of its own), else `BadSuccessor`.
     /// @param sigs threshold over `SetBridge(newBridge, adminNonce)`
     function setBridge(address newBridge, bytes[] calldata sigs) external {
         _checkThreshold(
@@ -422,7 +423,9 @@ contract WyecBridge is EIP712, Pausable {
             revert BadSuccessor(s);
         }
         if (p == address(this)) return;
-        if (p.code.length != 0) {
+        // A `ConsumedView` reads only this bridge's own `consumed`, not `isConsumed`, so it drops
+        // every lockId consumed on this bridge's predecessors: equivalent only when there are none.
+        if (address(predecessor) == address(0) && p.code.length != 0) {
             try IConsumedViewBridge(p).bridge() returns (address b) {
                 if (b == address(this)) return;
             } catch {}

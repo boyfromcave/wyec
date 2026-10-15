@@ -355,7 +355,8 @@ The order:
 2. Guardians re-read the successor (§8 step 3, plus `predecessor` and `token()`).
 3. The guardians sign `SetBridge(newBridge, adminNonce)` on the **old** bridge (the script prints
    it). `setBridge` refuses (`BadSuccessor`) a successor that does not bridge this token or does
-   not read this bridge as its `predecessor` (directly or via a `ConsumedView` over it); every
+   not read this bridge as its `predecessor` (directly, or via a `ConsumedView` over it only when
+   this bridge has no predecessor of its own: the view reads `consumed`, not `isConsumed`); every
    successor must expose `predecessor()` and `token()`. After `setBridge` the old bridge can neither mint nor burn (`NotBridge`). Its pending
    proposals are void without a challenge: they cannot execute. Hawkeye re-proposes them on the
    successor (its sign-once `Mint` record is per deployment, one `(amount, to)` per lock ever).

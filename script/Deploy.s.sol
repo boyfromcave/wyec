@@ -7,6 +7,7 @@ import {
     IConsumedViewBridge,
     IWrappedYcash,
     IWyecBridgeConsumed,
+    IWyecBridgeSuccessor,
     WyecBridge
 } from "../contracts/WyecBridge.sol";
 
@@ -130,6 +131,11 @@ contract Deploy is Script {
             c.predecessor == c.oldBridge || viewsBridge(c.predecessor, c.oldBridge),
             "PREDECESSOR must be OLD_BRIDGE or a ConsumedView over it"
         );
+        // A ConsumedView reads OLD_BRIDGE's own `consumed` only; OLD_BRIDGE's predecessors would be lost.
+        require(
+            c.predecessor == c.oldBridge || !hasPredecessor(c.oldBridge),
+            "OLD_BRIDGE has a predecessor: PREDECESSOR must be OLD_BRIDGE"
+        );
         r.deployBlock = block.number + 1;
         vm.startBroadcast();
         // casting is safe: both bounds are required in deploy().
@@ -158,6 +164,16 @@ contract Deploy is Script {
         if (adapter.code.length == 0) return false;
         try IConsumedViewBridge(adapter).bridge() returns (address b) {
             return b == bridge;
+        } catch {
+            return false;
+        }
+    }
+
+    /// Whether `b` reads another bridge's consumed lockIds (false for a generation-0 bridge, which
+    /// has no `predecessor()`).
+    function hasPredecessor(address b) internal view returns (bool) {
+        try IWyecBridgeSuccessor(b).predecessor() returns (address p) {
+            return p != address(0);
         } catch {
             return false;
         }

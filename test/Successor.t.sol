@@ -164,4 +164,25 @@ contract SuccessorTest is BridgeTestBase {
         ConsumedView v = new ConsumedView(IConsumedGetter(address(bridge)));
         handOff(bridge, address(successor(v)));
     }
+
+    /// A `ConsumedView` reads `consumed`, not `isConsumed`: over a bridge that has a predecessor
+    /// it would drop the predecessor's lockIds, so `setBridge` refuses it there.
+    function test_SetBridge_RejectsConsumedViewOverThisWithPredecessor() public {
+        mintOn(bridge, L, AMOUNT);
+        WyecBridge b = successor(IWyecBridgeConsumed(address(bridge)));
+        handOff(bridge, address(b));
+        ConsumedView v = new ConsumedView(IConsumedGetter(address(b)));
+        WyecBridge c = successor(v);
+        assertTrue(b.isConsumed(L));
+        assertFalse(c.isConsumed(L), "the view drops the first bridge's lockIds");
+        uint256 nonce = b.adminNonce();
+        bytes32 d = WyecEip712.digest(domainOf(address(b)), WyecEip712.setBridgeStruct(address(c), nonce));
+        bytes[] memory sigs = signSorted(guardianPair(), d);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.BadSuccessor.selector, address(c)));
+        b.setBridge(address(c), sigs);
+        assertEq(b.adminNonce(), nonce);
+        assertEq(token.bridge(), address(b));
+        // wired directly, the same hand-off goes through
+        handOff(b, address(successor(IWyecBridgeConsumed(address(b)))));
+    }
 }
