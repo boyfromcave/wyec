@@ -49,10 +49,11 @@ interface IWyecBridgeConsumed {
  * `threshold >= 2`. With `threshold == 1` one key mints immediately through `mint` and can also
  * lift the rate limit; such a deployment is for development only (design §4.5).
  *
- * Mainnet floors (chain id 1, enforced by the constructor): `threshold >= 2`,
- * `challengeWindow >= MIN_MAINNET_CHALLENGE_WINDOW` (the watchers' detection must fit in the window
- * even across an Ethereum finality delay) and `mintCap != 0` (the loss a rogue proposer can cause
- * while nobody challenges is bounded). Other chains are unconstrained (tests, devnets).
+ * Mainnet floors (chain id 1): `threshold >= 2` and `mintCap != 0` hold in the constructor and in
+ * every admin act (`setGuardians`, `setMintLimit`); `challengeWindow >= MIN_MAINNET_CHALLENGE_WINDOW`
+ * (immutable; the watchers' detection must fit in the window even across an Ethereum finality delay)
+ * is checked by the constructor. Together they bound the loss a rogue proposer can cause while nobody
+ * challenges. Other chains are unconstrained (tests, devnets).
  *
  * There is no release logic here: release, delay, cancel, rate limit and slashing of the Ycash
  * side are Ycash consensus rules (plan §3).
@@ -222,12 +223,8 @@ contract WyecBridge is EIP712, Pausable {
         IWyecBridgeConsumed predecessor_
     ) EIP712("WyecBridge", "1") {
         if (challengeWindow_ == 0) revert ZeroChallengeWindow();
-        if (block.chainid == 1) {
-            if (threshold_ < 2) revert MainnetThreshold(threshold_);
-            if (challengeWindow_ < MIN_MAINNET_CHALLENGE_WINDOW) {
-                revert MainnetChallengeWindow(challengeWindow_);
-            }
-            if (mintCap_ == 0) revert MainnetMintCapRequired();
+        if (block.chainid == 1 && challengeWindow_ < MIN_MAINNET_CHALLENGE_WINDOW) {
+            revert MainnetChallengeWindow(challengeWindow_);
         }
         token = token_;
         challengeWindow = challengeWindow_;
@@ -453,6 +450,7 @@ contract WyecBridge is EIP712, Pausable {
 
     function _setGuardians(address[] memory guardians_, uint8 threshold_) internal {
         if (threshold_ == 0 || threshold_ > guardians_.length) revert BadGuardianSet();
+        if (block.chainid == 1 && threshold_ < 2) revert MainnetThreshold(threshold_);
         for (uint256 i = 0; i < guardians.length; i++) {
             isGuardian[guardians[i]] = false;
         }
@@ -469,6 +467,7 @@ contract WyecBridge is EIP712, Pausable {
     /// The running total restarts: a quorum able to set the cap could raise it anyway.
     function _setMintLimit(uint256 mintCap_, uint256 capWindow_) internal {
         if (mintCap_ != 0 && capWindow_ == 0) revert BadMintLimit();
+        if (block.chainid == 1 && mintCap_ == 0) revert MainnetMintCapRequired();
         mintCap = mintCap_;
         capWindow = capWindow_;
         mintWindow = mintCap_ == 0 ? 0 : block.timestamp / capWindow_;

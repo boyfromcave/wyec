@@ -89,6 +89,31 @@ contract WyecBridgeTest is BridgeTestBase {
         assertEq(b.challengeWindow(), 60);
     }
 
+    /// The mainnet floors also bind the threshold-signed admin acts (W3-B-8); other chains do not.
+    function test_AdminActs_MainnetFloors() public {
+        vm.chainId(1);
+        address[] memory g = guardianAddrs;
+        bytes[] memory sigs = signedSetMintLimit(0, 0);
+        vm.expectRevert(WyecBridge.MainnetMintCapRequired.selector);
+        bridge.setMintLimit(0, 0, sigs);
+        sigs = signSorted(
+            guardianPair(),
+            WyecEip712.digest(domainOf(address(bridge)), WyecEip712.setGuardiansStruct(g, 1, 0))
+        );
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetThreshold.selector, uint8(1)));
+        bridge.setGuardians(g, 1, sigs);
+        setGuardians(g, 2);
+        setMintLimit(5e8, 1 days);
+        assertEq(bridge.threshold(), 2);
+        assertEq(bridge.mintCap(), 5e8);
+
+        vm.chainId(31337);
+        setGuardians(g, 1);
+        setMintLimit(0, 0);
+        assertEq(bridge.threshold(), 1);
+        assertEq(bridge.mintCap(), 0);
+    }
+
     function test_Constructor_ParamsAndEvents() public {
         address[] memory g = new address[](1);
         g[0] = address(1);

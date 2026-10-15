@@ -301,9 +301,9 @@ finality resumes; it never stops challenges.
 |---|---|---|---|
 | `challengeWindow` | constructor, immutable (a change is a successor bridge, §4) | > 0 seconds; **≥ `MIN_MAINNET_CHALLENGE_WINDOW` = 2 hours on mainnet** (constructor, script, Hawkeye) | longer than Ethereum finality (~13 min) plus the guardians' detection, lock check on Ycash and signing latency; a P8 parameter. Hawkeye's anvil runs use 60 s |
 | (mainnet floor) | `MIN_MAINNET_CHALLENGE_WINDOW` constant | 2 hours | derivation: a watcher keeps a quarter of the window as margin; the other three quarters cover two finality periods (2 × 768 s), 20 Ycash blocks of lock confirmation (20 × 75 s) and a 600 s submission margin, so ¾ W ≥ 3,636 s, W ≥ 4,848 s, rounded up. A floor, not a recommendation: the P8 value may be far larger |
-| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**not at construction on mainnet**: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. A quorum can still set 0 later through `setMintLimit` (it could raise the cap to 2²⁵⁶ anyway); Hawkeye alarms and stops its own mint-side acts on mainnet when it does |
+| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**never on mainnet**, at construction or through `setMintLimit`: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. Off mainnet a quorum can set 0 through `setMintLimit`; Hawkeye alarms and stops its own mint-side acts when the cap is 0 |
 | `capWindow` | constructor; `setMintLimit` | > 0 when `mintCap > 0` | ≥ `challengeWindow`; e.g. one day |
-| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (constructor `MainnetThreshold`, script) | a majority |
+| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (`MainnetThreshold`, in the constructor and in `setGuardians`; script) | a majority |
 
 #### 4.5.4 Rate limit (E-6, resolved)
 
