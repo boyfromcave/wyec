@@ -19,6 +19,18 @@ interface IWyecBridgeConsumed {
     function isConsumed(bytes32 lockId) external view returns (bool);
 }
 
+/// @notice What `setBridge` reads from a successor (design §4.6): the bridge it reads consumed
+///         lockIds from, and the token it bridges.
+interface IWyecBridgeSuccessor {
+    function predecessor() external view returns (address);
+    function token() external view returns (address);
+}
+
+/// @notice The `ConsumedView` getter `setBridge` follows when a successor's predecessor is an adapter.
+interface IConsumedViewBridge {
+    function bridge() external view returns (address);
+}
+
 /**
  * @title WyecBridge
  * @notice The wYEC bridge: all policy for minting and burning Wrapped Ycash (upgrade plan §4.3,
@@ -49,10 +61,11 @@ interface IWyecBridgeConsumed {
  * `threshold >= 2`. With `threshold == 1` one key mints immediately through `mint` and can also
  * lift the rate limit; such a deployment is for development only (design §4.5).
  *
- * Mainnet floors (chain id 1, enforced by the constructor): `threshold >= 2`,
- * `challengeWindow >= MIN_MAINNET_CHALLENGE_WINDOW` (the watchers' detection must fit in the window
- * even across an Ethereum finality delay) and `mintCap != 0` (the loss a rogue proposer can cause
- * while nobody challenges is bounded). Other chains are unconstrained (tests, devnets).
+ * Mainnet floors (chain id 1): `threshold >= 2` and `mintCap != 0` hold in the constructor and in
+ * every admin act (`setGuardians`, `setMintLimit`); `challengeWindow >= MIN_MAINNET_CHALLENGE_WINDOW`
+ * (immutable; the watchers' detection must fit in the window even across an Ethereum finality delay)
+ * is checked by the constructor. Together they bound the loss a rogue proposer can cause while nobody
+ * challenges. Other chains are unconstrained (tests, devnets).
  *
  * There is no release logic here: release, delay, cancel, rate limit and slashing of the Ycash
  * side are Ycash consensus rules (plan §3).
@@ -171,6 +184,9 @@ contract WyecBridge is EIP712, Pausable {
     /// @notice Guardian `challenger` signed `Challenge(lockId, proposalId)`; the proposal is deleted.
     event MintChallenged(bytes32 indexed lockId, uint256 indexed proposalId, address indexed challenger);
 
+    /// @notice `setBridge`'s successor does not read this bridge as its predecessor or does not
+    ///         bridge this token.
+    error BadSuccessor(address newBridge);
     /// @notice Empty set, zero/duplicate member, or threshold 0 or above the set size.
     error BadGuardianSet();
     /// @notice The lockId has already minted.
@@ -237,11 +253,9 @@ contract WyecBridge is EIP712, Pausable {
     ) EIP712("WyecBridge", "1") {
         if (challengeWindow_ == 0) revert ZeroChallengeWindow();
         if (block.chainid == 1) {
-            if (threshold_ < 2) revert MainnetThreshold(threshold_);
             if (challengeWindow_ < MIN_MAINNET_CHALLENGE_WINDOW) {
                 revert MainnetChallengeWindow(challengeWindow_);
             }
-            if (mintCap_ == 0) revert MainnetMintCapRequired();
             if (maxOpenProposals_ == 0) revert MainnetOpenProposalCapRequired();
         }
         maxOpenProposals = maxOpenProposals_;
@@ -402,13 +416,40 @@ contract WyecBridge is EIP712, Pausable {
     }
 
     /// @notice Retires this bridge in favour of a successor. After this call nothing here can mint
-    ///         or burn.
+    ///         or burn. The successor must bridge this token and read this bridge as its
+    ///         `predecessor` (directly, or through a `ConsumedView` over it when this bridge has
+    ///         no predecessor of its own), else `BadSuccessor`.
     /// @param sigs threshold over `SetBridge(newBridge, adminNonce)`
     function setBridge(address newBridge, bytes[] calldata sigs) external {
         _checkThreshold(
             _hashTypedDataV4(keccak256(abi.encode(SET_BRIDGE_TYPEHASH, newBridge, adminNonce++))), sigs
         );
+        _checkSuccessor(newBridge);
         token.setBridge(newBridge);
+    }
+
+    function _checkSuccessor(address s) internal view {
+        if (s.code.length == 0) revert BadSuccessor(s);
+        try IWyecBridgeSuccessor(s).token() returns (address t) {
+            if (t != address(token)) revert BadSuccessor(s);
+        } catch {
+            revert BadSuccessor(s);
+        }
+        address p;
+        try IWyecBridgeSuccessor(s).predecessor() returns (address q) {
+            p = q;
+        } catch {
+            revert BadSuccessor(s);
+        }
+        if (p == address(this)) return;
+        // A `ConsumedView` reads only this bridge's own `consumed`, not `isConsumed`, so it drops
+        // every lockId consumed on this bridge's predecessors: equivalent only when there are none.
+        if (address(predecessor) == address(0) && p.code.length != 0) {
+            try IConsumedViewBridge(p).bridge() returns (address b) {
+                if (b == address(this)) return;
+            } catch {}
+        }
+        revert BadSuccessor(s);
     }
 
     // ---------------------------------------------------------------- views
@@ -481,6 +522,7 @@ contract WyecBridge is EIP712, Pausable {
 
     function _setGuardians(address[] memory guardians_, uint8 threshold_) internal {
         if (threshold_ == 0 || threshold_ > guardians_.length) revert BadGuardianSet();
+        if (block.chainid == 1 && threshold_ < 2) revert MainnetThreshold(threshold_);
         for (uint256 i = 0; i < guardians.length; i++) {
             isGuardian[guardians[i]] = false;
         }
@@ -497,6 +539,7 @@ contract WyecBridge is EIP712, Pausable {
     /// The running total restarts: a quorum able to set the cap could raise it anyway.
     function _setMintLimit(uint256 mintCap_, uint256 capWindow_) internal {
         if (mintCap_ != 0 && capWindow_ == 0) revert BadMintLimit();
+        if (block.chainid == 1 && mintCap_ == 0) revert MainnetMintCapRequired();
         mintCap = mintCap_;
         capWindow = capWindow_;
         mintWindow = mintCap_ == 0 ? 0 : block.timestamp / capWindow_;

@@ -7,7 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ERC20Capped} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Capped.sol";
 import {WrappedYcash} from "../contracts/WrappedYcash.sol";
-import {IWrappedYcash, WyecBridge} from "../contracts/WyecBridge.sol";
+import {IWrappedYcash, IWyecBridgeConsumed, WyecBridge} from "../contracts/WyecBridge.sol";
 import {BridgeTestBase} from "./utils/BridgeTestBase.sol";
 import {WyecEip712} from "./utils/WyecEip712.sol";
 
@@ -76,9 +76,9 @@ contract WyecBridgeTest is BridgeTestBase {
         );
         new WyecBridge(t, guardianAddrs, 2, 2 hours - 1, 5e8, 1 days, 0, NO_PREDECESSOR);
         vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetThreshold.selector, uint8(1)));
-        new WyecBridge(t, guardianAddrs, 1, 2 hours, 5e8, 1 days, 0, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 1, 2 hours, 5e8, 1 days, 32, NO_PREDECESSOR);
         vm.expectRevert(WyecBridge.MainnetMintCapRequired.selector);
-        new WyecBridge(t, guardianAddrs, 2, 2 hours, 0, 0, 0, NO_PREDECESSOR);
+        new WyecBridge(t, guardianAddrs, 2, 2 hours, 0, 0, 32, NO_PREDECESSOR);
         vm.expectRevert(WyecBridge.MainnetOpenProposalCapRequired.selector);
         new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days, 0, NO_PREDECESSOR);
         WyecBridge b = new WyecBridge(t, guardianAddrs, 2, 2 hours, 5e8, 1 days, 32, NO_PREDECESSOR);
@@ -90,6 +90,31 @@ contract WyecBridgeTest is BridgeTestBase {
         vm.chainId(11155111);
         b = new WyecBridge(t, guardianAddrs, 1, 60, 0, 0, 0, NO_PREDECESSOR);
         assertEq(b.challengeWindow(), 60);
+    }
+
+    /// The mainnet floors also bind the threshold-signed admin acts (W3-B-8); other chains do not.
+    function test_AdminActs_MainnetFloors() public {
+        vm.chainId(1);
+        address[] memory g = guardianAddrs;
+        bytes[] memory sigs = signedSetMintLimit(0, 0);
+        vm.expectRevert(WyecBridge.MainnetMintCapRequired.selector);
+        bridge.setMintLimit(0, 0, sigs);
+        sigs = signSorted(
+            guardianPair(),
+            WyecEip712.digest(domainOf(address(bridge)), WyecEip712.setGuardiansStruct(g, 1, 0))
+        );
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.MainnetThreshold.selector, uint8(1)));
+        bridge.setGuardians(g, 1, sigs);
+        setGuardians(g, 2);
+        setMintLimit(5e8, 1 days);
+        assertEq(bridge.threshold(), 2);
+        assertEq(bridge.mintCap(), 5e8);
+
+        vm.chainId(31337);
+        setGuardians(g, 1);
+        setMintLimit(0, 0);
+        assertEq(bridge.threshold(), 1);
+        assertEq(bridge.mintCap(), 0);
     }
 
     function test_Constructor_ParamsAndEvents() public {
@@ -658,7 +683,18 @@ contract WyecBridgeTest is BridgeTestBase {
 
     function test_SetBridge_Handoff() public {
         mintTo(alice, AMOUNT, LOCK);
-        address successor = makeAddr("successor");
+        address successor = address(
+            new WyecBridge(
+                IWrappedYcash(address(token)),
+                guardianAddrs,
+                2,
+                WINDOW,
+                0,
+                0,
+                0,
+                IWyecBridgeConsumed(address(bridge))
+            )
+        );
         bytes32 d = WyecEip712.digest(
             domainOf(address(bridge)), WyecEip712.setBridgeStruct(successor, bridge.adminNonce())
         );
@@ -689,7 +725,7 @@ contract WyecBridgeTest is BridgeTestBase {
             domainOf(address(bridge)), WyecEip712.setBridgeStruct(address(0), bridge.adminNonce())
         );
         bytes[] memory sigs = signSorted(guardianPair(), d);
-        vm.expectRevert(WrappedYcash.ZeroBridge.selector);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.BadSuccessor.selector, address(0)));
         bridge.setBridge(address(0), sigs);
     }
 

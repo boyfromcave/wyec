@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
+import {ConsumedView, IConsumedGetter} from "../contracts/ConsumedView.sol";
 import {WrappedYcash} from "../contracts/WrappedYcash.sol";
 import {WyecBridge} from "../contracts/WyecBridge.sol";
 import {Deploy} from "../script/Deploy.s.sol";
@@ -128,9 +129,37 @@ contract DeployScriptTest is Test {
         s.oldBridge = r.bridge;
         vm.expectRevert(bytes("a successor needs a PREDECESSOR"));
         d.deploy(s);
+        s = config("successor");
+        s.oldBridge = r.bridge;
+        s.predecessor = makeAddr("elsewhere");
+        vm.expectRevert(bytes("PREDECESSOR must be OLD_BRIDGE or a ConsumedView over it"));
+        d.deploy(s);
         s = config("bad");
         s.predecessor = r.bridge;
         vm.expectRevert(bytes("PREDECESSOR without OLD_BRIDGE"));
+        d.deploy(s);
+    }
+
+    /// A ConsumedView as PREDECESSOR: accepted over a bridge without a predecessor, refused over
+    /// one with a predecessor (the view would drop that predecessor's lockIds).
+    function test_Deploy_SuccessorConsumedView() public {
+        Deploy d = new Deploy();
+        Deploy.Config memory c = config("first");
+        Deploy.Result memory r = d.deploy(c);
+        vm.removeFile(c.file);
+        Deploy.Config memory s = config("successor");
+        s.oldBridge = r.bridge;
+        s.predecessor = address(new ConsumedView(IConsumedGetter(r.bridge)));
+        Deploy.Result memory r2 = d.deploy(s);
+        vm.removeFile(s.file);
+        assertEq(address(WyecBridge(r2.bridge).predecessor()), s.predecessor);
+
+        vm.prank(r.bridge);
+        WrappedYcash(r.token).setBridge(r2.bridge);
+        s = config("successor");
+        s.oldBridge = r2.bridge;
+        s.predecessor = address(new ConsumedView(IConsumedGetter(r2.bridge)));
+        vm.expectRevert(bytes("OLD_BRIDGE has a predecessor: PREDECESSOR must be OLD_BRIDGE"));
         d.deploy(s);
     }
 

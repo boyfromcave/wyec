@@ -301,10 +301,10 @@ finality resumes; it never stops challenges.
 |---|---|---|---|
 | `challengeWindow` | constructor, immutable (a change is a successor bridge, §4) | > 0 seconds; **≥ `MIN_MAINNET_CHALLENGE_WINDOW` = 2 hours on mainnet** (constructor, script, Hawkeye) | longer than Ethereum finality (~13 min) plus the guardians' detection, lock check on Ycash and signing latency; a P8 parameter. Hawkeye's anvil runs use 60 s |
 | (mainnet floor) | `MIN_MAINNET_CHALLENGE_WINDOW` constant | 2 hours | derivation: a watcher keeps a quarter of the window as margin; the other three quarters cover two finality periods (2 × 768 s), 20 Ycash blocks of lock confirmation (20 × 75 s) and a 600 s submission margin, so ¾ W ≥ 3,636 s, W ≥ 4,848 s, rounded up. A floor, not a recommendation: the P8 value may be far larger |
-| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**not at construction on mainnet**: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. A quorum can still set 0 later through `setMintLimit` (it could raise the cap to 2²⁵⁶ anyway); Hawkeye alarms and stops its own mint-side acts on mainnet when it does |
+| `mintCap` | constructor; `setMintLimit` | base units per window; 0 = no limit (**never on mainnet**, at construction or through `setMintLimit`: `MainnetMintCapRequired`) | at most what the set is willing to lose before a human reacts; with `capWindow`, below the YEC the set can slash. Off mainnet a quorum can set 0 through `setMintLimit`; Hawkeye alarms and stops its own mint-side acts when the cap is 0 |
 | `maxOpenProposals` | constructor | most proposals one proposer may have open at once (`TooManyOpenProposals`); 0 = no limit (**not on mainnet**: `MainnetOpenProposalCapRequired`) | bounds what one compromised guardian key can open before the set pauses and rotates it out, so the watchers' challenges in flight are at most `maxOpenProposals` per rogue key (audit W3-B-3); an honest proposer at the cap uses the threshold path. Start from 32; the mainnet value is an owner decision at deployment |
 | `capWindow` | constructor; `setMintLimit` | > 0 when `mintCap > 0` | ≥ `challengeWindow`; e.g. one day |
-| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (constructor `MainnetThreshold`, script) | a majority |
+| `threshold` | constructor; `setGuardians` | ≥ 2 on mainnet (`MainnetThreshold`, in the constructor and in `setGuardians`; script) | a majority |
 
 #### 4.5.4 Rate limit (E-6, resolved)
 
@@ -355,7 +355,10 @@ The order:
    deployment file records `predecessor`.
 2. Guardians re-read the successor (§8 step 3, plus `predecessor` and `token()`).
 3. The guardians sign `SetBridge(newBridge, adminNonce)` on the **old** bridge (the script prints
-   it); after `setBridge` the old bridge can neither mint nor burn (`NotBridge`). Its pending
+   it). `setBridge` refuses (`BadSuccessor`) a successor that does not bridge this token or does
+   not read this bridge as its `predecessor` (directly, or via a `ConsumedView` over it only when
+   this bridge has no predecessor of its own: the view reads `consumed`, not `isConsumed`); every
+   successor must expose `predecessor()` and `token()`. After `setBridge` the old bridge can neither mint nor burn (`NotBridge`). Its pending
    proposals are void without a challenge: they cannot execute. Hawkeye re-proposes them on the
    successor (its sign-once `Mint` record is per deployment, one `(amount, to)` per lock ever).
 4. Attestors switch `[eth] deployment` to the new file in one maintenance window.
