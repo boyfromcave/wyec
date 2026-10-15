@@ -7,7 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ERC20Capped} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Capped.sol";
 import {WrappedYcash} from "../contracts/WrappedYcash.sol";
-import {IWrappedYcash, WyecBridge} from "../contracts/WyecBridge.sol";
+import {IWrappedYcash, IWyecBridgeConsumed, WyecBridge} from "../contracts/WyecBridge.sol";
 import {BridgeTestBase} from "./utils/BridgeTestBase.sol";
 import {WyecEip712} from "./utils/WyecEip712.sol";
 
@@ -680,7 +680,17 @@ contract WyecBridgeTest is BridgeTestBase {
 
     function test_SetBridge_Handoff() public {
         mintTo(alice, AMOUNT, LOCK);
-        address successor = makeAddr("successor");
+        address successor = address(
+            new WyecBridge(
+                IWrappedYcash(address(token)),
+                guardianAddrs,
+                2,
+                WINDOW,
+                0,
+                0,
+                IWyecBridgeConsumed(address(bridge))
+            )
+        );
         bytes32 d = WyecEip712.digest(
             domainOf(address(bridge)), WyecEip712.setBridgeStruct(successor, bridge.adminNonce())
         );
@@ -711,7 +721,7 @@ contract WyecBridgeTest is BridgeTestBase {
             domainOf(address(bridge)), WyecEip712.setBridgeStruct(address(0), bridge.adminNonce())
         );
         bytes[] memory sigs = signSorted(guardianPair(), d);
-        vm.expectRevert(WrappedYcash.ZeroBridge.selector);
+        vm.expectRevert(abi.encodeWithSelector(WyecBridge.BadSuccessor.selector, address(0)));
         bridge.setBridge(address(0), sigs);
     }
 
