@@ -1,37 +1,6 @@
 # OSV-Scanner policy (SECURITY-CI.md, "OSV-Scanner"). Every ignore names the advisory, why it does not
 # reach anything wYEC ships, and an expiry no more than 90 days out; on expiry the check fails again.
-#
-# All three are in contrib/semgrep/requirements.txt, the hash-locked Semgrep CLI shared verbatim by every
-# Yellowback repo (its source of record is ycash-dd): fixed there, then copied here, not diverged locally.
-# Semgrep runs only on a CI runner over this repository's own files; none of these packages is a
-# dependency of the contracts, the deployment script or anything Hawkeye fetches.
 
-[[IgnoredVulns]]
-id = "PYSEC-2026-4320"
-ignoreUntil = 2026-11-22
-reason = "certifi 2026.7.22 in the shared Semgrep lock (CI-only scanner). Fixed in certifi 2026.10.19; pending the ycash-dd requirements bump that every repo copies."
-
-[[IgnoredVulns]]
-id = "GHSA-6q48-6c7w-9gw2"
-ignoreUntil = 2026-11-22
-reason = "Alias of PYSEC-2026-4320 (certifi, shared Semgrep lock); see above."
-
-[[IgnoredVulns]]
-id = "GHSA-84m7-p3x7-pcfv"
-ignoreUntil = 2026-11-22
-reason = "mcp 1.29.0 in the shared Semgrep lock: Semgrep's optional MCP server, never started by scan.py (semgrep scan only). Pending the ycash-dd requirements bump."
-
-[[IgnoredVulns]]
-id = "CVE-2026-59951"
-ignoreUntil = 2026-11-22
-reason = "Alias of GHSA-84m7-p3x7-pcfv (mcp, shared Semgrep lock); see above."
-
-[[IgnoredVulns]]
-id = "GHSA-xcq7-p3pf-p88h"
-ignoreUntil = 2026-11-22
-reason = "opentelemetry-api 1.37.0 in the shared Semgrep lock: tracing is off (scan.py passes --metrics=off, no OTLP endpoint). Pending the ycash-dd requirements bump."
-
-[[IgnoredVulns]]
-id = "CVE-2026-114603"
-ignoreUntil = 2026-11-22
-reason = "Alias of GHSA-xcq7-p3pf-p88h (opentelemetry-api, shared Semgrep lock); see above."
+# contrib/semgrep/requirements.txt (the shared, hash-locked Semgrep CLI, copied byte-for-byte from
+# ycash-dd) has no open advisory: certifi, mcp and opentelemetry-* are overridden there to fixed
+# versions (contrib/semgrep/security-overrides.txt), so it needs no entry here.
