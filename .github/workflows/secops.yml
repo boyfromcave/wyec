@@ -1,0 +1,282 @@
+name: secops
+
+# Security checks beside semgrep.yml and codeql.yml (SECURITY-CI.md). One job per leg; every tool is
+# installed at an exact version, checked against a recorded sha256 or a hash-locked requirements file.
+#
+#   slither        Solidity static analysis of contracts/ (Foundry build, solc 0.8.37 from foundry.toml).
+#                  Fails a PR on a High-impact, or Medium-impact High-confidence, result not accepted in
+#                  contrib/slither/accepted.json (contrib/slither/gate.py). SARIF to code scanning.
+#   aderyn         second Solidity analyzer, report only (step summary and artifact).
+#   zizmor         every workflow and dependabot.yml under .github; fails on any finding. SARIF to code scanning.
+#   gitleaks       PR: the PR's commits, fails on a leak. Push, nightly, dispatch: full history.
+#   osv-scanner    every lockfile (package-lock.json, the hash-locked requirements files); fails on a
+#                  known vulnerability not ignored, with a reason and an expiry, in osv-scanner.toml.
+#   npm-audit      production npm dependencies (package-lock.json), fails at high or above.
+#
+# Nothing here opens PRs or issues. Results go to the step summary, the run's artifacts and GitHub code
+# scanning (categories slither, zizmor, gitleaks, osv-scanner).
+on:
+  push:
+    branches: [upgrade/vault]
+  pull_request:
+  schedule:
+    - cron: '43 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: secops-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FOUNDRY_VERSION: v1.7.1
+  ADERYN_VERSION: 0.6.8
+  ADERYN_SHA256: ffd6ca658962e211a3ac821c646f69c8e14bf1b1001cbfe091bcd4535a691e46
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  OSV_SCANNER_VERSION: 2.6.0
+  OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+
+jobs:
+  slither:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+          cache: false
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Slither (hash-locked)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slither"
+          "$RUNNER_TEMP/slither/bin/pip" install --quiet --disable-pip-version-check --require-hashes --no-deps \
+            -r contrib/slither/requirements.txt
+          "$RUNNER_TEMP/slither/bin/slither" --version
+      - name: Slither
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          mkdir -p slither-out
+          # slither.config.json: Foundry build, contracts/ only. --fail-none: gate.py decides.
+          "$RUNNER_TEMP/slither/bin/slither" . --fail-none \
+            --json slither-out/raw.json --sarif slither-out/raw.sarif
+          args=(--json slither-out/raw.json --sarif slither-out/raw.sarif --out slither-out)
+          if [ "$EVENT" = pull_request ]; then args+=(--enforce); fi
+          rc=0
+          python3 contrib/slither/gate.py "${args[@]}" || rc=$?
+          cat slither-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: slither
+          path: |
+            slither-out/results.sarif
+            slither-out/summary.md
+          retention-days: 30
+          if-no-files-found: ignore
+
+  aderyn:
+    name: aderyn (report only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Aderyn (sha256-checked release binary)
+        run: |
+          cd "$RUNNER_TEMP"
+          f=aderyn-x86_64-unknown-linux-gnu.tar.xz
+          curl -sSfL -o "$f" "https://github.com/Cyfrin/aderyn/releases/download/aderyn-v${ADERYN_VERSION}/$f"
+          echo "$ADERYN_SHA256  $f" | sha256sum -c -
+          tar xJf "$f"
+          ./aderyn-x86_64-unknown-linux-gnu/aderyn --version
+      - name: Aderyn
+        run: |
+          mkdir -p aderyn-out
+          "$RUNNER_TEMP/aderyn-x86_64-unknown-linux-gnu/aderyn" . --no-snippets -o aderyn-out/report.md
+          {
+            echo "## Aderyn (report only)"
+            echo
+            echo "Triage: SECURITY-CI.md, \"Aderyn\". Full report in the aderyn artifact."
+            echo
+            sed -n '/^# Summary/,/^# High Issues/p' aderyn-out/report.md | sed '$d'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: aderyn
+          path: aderyn-out/report.md
+          retention-days: 30
+          if-no-files-found: ignore
+
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install zizmor (hash-locked)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/pip" install --quiet --disable-pip-version-check --require-hashes --no-deps \
+            -r contrib/secops/requirements.txt
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}  # online audits (impostor commits, known-vulnerable actions)
+        run: |
+          mkdir -p zizmor-out
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --format sarif .github > zizmor-out/results.sarif || true
+          "$RUNNER_TEMP/zizmor/bin/zizmor" .github
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: zizmor
+          path: zizmor-out/results.sarif
+          retention-days: 30
+          if-no-files-found: ignore
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (sha256-checked release binary)
+        run: |
+          cd "$RUNNER_TEMP"
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "$GITLEAKS_SHA256  $f" | sha256sum -c -
+          tar xzf "$f" gitleaks
+      - name: gitleaks
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p gitleaks-out
+          args=(git --redact --no-banner --report-format sarif --report-path gitleaks-out/results.sarif --exit-code 1)
+          if [ "$EVENT" = pull_request ]; then
+            args+=(--log-opts="$BASE..$HEAD")
+            echo "gitleaks: the PR's commits ($BASE..$HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "gitleaks: full history" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          "$RUNNER_TEMP/gitleaks" "${args[@]}" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: gitleaks
+          path: gitleaks-out/results.sarif
+          retention-days: 30
+          if-no-files-found: ignore
+
+  osv-scanner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install OSV-Scanner (sha256-checked release binary)
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "$OSV_SCANNER_SHA256  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+      - name: OSV-Scanner
+        run: |
+          mkdir -p osv-out
+          # One config for every lockfile (otherwise each directory's own osv-scanner.toml is used).
+          lockfiles=(-L package-lock.json
+                     -L requirements.txt:contrib/semgrep/requirements.txt
+                     -L requirements.txt:contrib/slither/requirements.txt
+                     -L requirements.txt:contrib/secops/requirements.txt)
+          "$RUNNER_TEMP/osv-scanner" scan source --config osv-scanner.toml "${lockfiles[@]}" \
+            --format sarif --output-file osv-out/results.sarif || true
+          rc=0
+          "$RUNNER_TEMP/osv-scanner" scan source --config osv-scanner.toml "${lockfiles[@]}" \
+            --format markdown --output-file osv-out/summary.md || rc=$?
+          { echo "## OSV-Scanner"; echo; cat osv-out/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: osv-scanner
+          path: |
+            osv-out/results.sarif
+            osv-out/summary.md
+          retention-days: 30
+          if-no-files-found: ignore
+
+  npm-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: npm audit (production dependencies)
+        run: |
+          npm ci --ignore-scripts
+          npm audit --omit=dev --audit-level=high
+
+  code-scanning:
+    needs: [slither, zizmor, gitleaks, osv-scanner]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [slither, zizmor, gitleaks, osv-scanner]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        id: download
+        continue-on-error: true  # a leg that failed before writing its SARIF has nothing to upload
+        with:
+          name: ${{ matrix.tool }}
+          path: out
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        if: ${{ steps.download.outcome == 'success' && hashFiles('out/results.sarif') != '' }}
+        with:
+          sarif_file: out/results.sarif
+          category: ${{ matrix.tool }}

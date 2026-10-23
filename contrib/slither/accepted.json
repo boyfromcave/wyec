@@ -1,0 +1,89 @@
+{
+  "_comment": "Accepted Slither results (SECURITY-CI.md, 'Accepting a finding'). fingerprint (contrib/slither/gate.py: check + elements' names and files, no line numbers) -> {check, where, reason, by, date}. Every entry needs a reason a reviewer can check. Re-triage when the flagged code changes (the fingerprint then changes and the result re-opens).",
+  "findings": {
+    "d8208d21e21f90b7": {
+      "check": "incorrect-equality",
+      "where": "WyecBridge.challengeMint",
+      "reason": "`id == 0 || id != proposalId` compares a stored proposal id with the one the challenger signed; strict equality is the point (a challenge binds one proposal). The detector targets balance checks; no balance is involved.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "6d85dab37e646a92": {
+      "check": "incorrect-equality",
+      "where": "WyecBridge.mintAvailable",
+      "reason": "`block.timestamp / capWindow == mintWindow` compares two window indices (integers); equality is exact by construction, no balance is involved. View function.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "a645bc6a75d370d2": {
+      "check": "incorrect-equality",
+      "where": "WyecBridge._mint",
+      "reason": "`w == mintWindow` compares the current rate-limit window index with the stored one; equality is the intended same-window test, no balance is involved.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "58d2edef418ef008": {
+      "check": "uninitialized-local",
+      "where": "WyecBridge._checkSuccessor",
+      "reason": "`address p` is assigned in the try branch and the catch branch reverts, so it is always set before use; Slither does not model try/catch.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "d30e65cc1f2da437": {
+      "check": "reentrancy-benign",
+      "where": "WyecBridge.burn",
+      "reason": "The external call is to the immutable `token` (WrappedYcash: stock OpenZeppelin ERC-20, no hooks or callbacks); it cannot re-enter. burnNonce++ after the call is safe.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "655ad311acbc5fb1": {
+      "check": "reentrancy-events",
+      "where": "WyecBridge.burn",
+      "reason": "Event after the call to the immutable, hook-free `token`; no re-entry is possible, so event order is fixed.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "e80fc54444bcc58b": {
+      "check": "reentrancy-events",
+      "where": "WyecBridge._mint",
+      "reason": "Event after token.crosschainMint on the immutable, hook-free `token`; consumed[lockId] and the rate limit are written before the call (checks-effects-interactions).",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "8425b2632f2f666d": {
+      "check": "timestamp",
+      "where": "WyecBridge.challengeMint",
+      "reason": "The flagged comparison is of proposal ids, not of a timestamp (Slither taints it through the Proposal struct that also holds eta).",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "7221e46e4a8b437c": {
+      "check": "timestamp",
+      "where": "WyecBridge.executeMint",
+      "reason": "`block.timestamp < p.eta`: the challenge window is >= 2 hours on mainnet (MIN_MAINNET_CHALLENGE_WINDOW); validator timestamp skew is seconds. Design \u00a74.5.3.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "ef21f4ed28b95beb": {
+      "check": "timestamp",
+      "where": "WyecBridge.proposalStatus",
+      "reason": "View-only mirror of executeMint's eta check; same reasoning (window of hours, skew of seconds).",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "876b76733e430f13": {
+      "check": "timestamp",
+      "where": "WyecBridge.mintAvailable",
+      "reason": "Rate-limit windows are `block.timestamp / capWindow`, capWindow in hours/days; a few seconds of skew moves a window boundary by seconds at most. View function.",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    },
+    "15c651d4ee3e7b9f": {
+      "check": "timestamp",
+      "where": "WyecBridge._mint",
+      "reason": "Same fixed-window rate limit as mintAvailable; skew of seconds against windows of hours does not change the bound materially (design \u00a74.5).",
+      "by": "secops CI setup",
+      "date": "2026-10-23"
+    }
+  }
+}

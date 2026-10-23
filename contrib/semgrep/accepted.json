@@ -1,0 +1,32 @@
+{
+  "_comment": "Accepted Semgrep findings (contrib/semgrep/README.md, 'Accepting a finding'). findings: fingerprint -> {rule, path, reason, by, date}. rule_paths: [{rule (glob), paths (globs), reason, by, date}]. Every entry needs a reason a reviewer can check.",
+  "findings": {
+    "9ea874ac067802c7": {
+      "rule": "decurity.solidity.security.basic-arithmetic-underflow",
+      "path": "contracts/WyecBridge.sol",
+      "reason": "proposeMint's `openProposals[p.proposer] -= 1` (release of a replaced void proposal's slot). solc 0.8.37 checked arithmetic (no `unchecked` block anywhere in contracts/), so an underflow reverts rather than wraps; and the counter is >= 1 whenever p.id != 0 (invariant of openProposals, fuzzed by test/ProposalCapInvariant.t.sol). Re-check if this line changes.",
+      "by": "semgrep CI setup",
+      "date": "2026-10-23"
+    }
+  },
+  "rule_paths": [
+    {
+      "rule": "decurity.solidity.security.basic-arithmetic-underflow",
+      "paths": [
+        "test/**"
+      ],
+      "reason": "Foundry tests: subtractions of fuzz inputs that are bound() first (checked 2026-10-23); they never ship, and solc 0.8 checked arithmetic reverts on underflow.",
+      "by": "semgrep CI setup",
+      "date": "2026-10-23"
+    },
+    {
+      "rule": "javascript.lang.security.audit.*",
+      "paths": [
+        "tools/solc-shim.js"
+      ],
+      "reason": "Opt-in local build helper (README 'Build and test'): the solc-js shim reads the source files Foundry's own compiler request names, under --base-path/--include-path, on the developer's machine. No untrusted input; never deployed and not used in CI.",
+      "by": "semgrep CI setup",
+      "date": "2026-10-23"
+    }
+  ]
+}

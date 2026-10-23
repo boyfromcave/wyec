@@ -1,0 +1,103 @@
+# Copyright (c) 2026 The Ycash developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or https://www.opensource.org/licenses/mit-license.php .
+#
+# wYEC bridge rules, scanned beside the pinned rule packs (contrib/semgrep/README.md): the invariants
+# of docs/wyec-contract-design.md that a generic pack does not know. metadata.bucket pins a rule's
+# bucket; without it the bucket follows severity/impact/confidence. Tests: contrib/semgrep/rules/wyec.sol
+# (`semgrep --test contrib/semgrep/rules`).
+rules:
+  - id: wyec.auth.tx-origin
+    languages: [solidity]
+    paths:
+      include: ["/contracts/**", "/script/**"]
+    pattern: tx.origin
+    message: >-
+      tx.origin in bridge code. Authorisation in wYEC is a guardian-threshold EIP-712 signature or
+      msg.sender == bridge; tx.origin is phishable through any intermediate contract and never
+      identifies a guardian (guardian acts are submitted by anyone).
+    severity: ERROR
+    metadata:
+      category: security
+      bucket: critical
+      cwe: ["CWE-477: Use of Obsolete Function"]
+      references: ["docs/wyec-contract-design.md §4"]
+
+  - id: wyec.call.unchecked-low-level-call
+    languages: [solidity]
+    paths:
+      include: ["/contracts/**", "/script/**"]
+    patterns:
+      - pattern-either:
+          - pattern: $X.call(...);
+          - pattern: '$X.call{value: $V}(...);'
+          - pattern: '$X.call{gas: $G}(...);'
+          - pattern: '$X.call{value: $V, gas: $G}(...);'
+          - pattern: '$X.call{gas: $G, value: $V}(...);'
+          - pattern: $X.delegatecall(...);
+          - pattern: $X.staticcall(...);
+          - pattern: $X.send(...);
+      # The flag is kept: assigned (Solidity's tuple destructuring parses loosely), or tested in place.
+      - pattern-not-inside: $T $R = ...;
+      - pattern-not-inside: $R = ...;
+      - pattern-not-inside: require(...);
+      - pattern-not-inside: assert(...);
+      - pattern-not-inside: if (<... $X.$F(...) ...>) { ... }
+      - pattern-not-inside: return ...;
+    message: >-
+      A low-level call whose success flag is discarded. A failed call returns false instead of
+      reverting, so the bridge would carry on as if it had succeeded; check the returned bool (or use
+      a typed interface call, which reverts).
+    severity: ERROR
+    metadata:
+      category: security
+      bucket: high
+      cwe: ["CWE-252: Unchecked Return Value"]
+
+  - id: wyec.sig.recover-outside-eip712-domain
+    languages: [solidity]
+    paths:
+      include: ["/contracts/**"]
+    patterns:
+      - pattern-either:
+          - pattern: ECDSA.recover($D, ...)
+          - pattern: ECDSA.tryRecover($D, ...)
+          - pattern: ecrecover($D, ...)
+          - pattern: SignatureChecker.isValidSignatureNow($A, $D, ...)
+      - pattern-not: ECDSA.recover(_hashTypedDataV4(...), ...)
+      - pattern-not: ECDSA.recover(mintDigest(...), ...)
+      - pattern-not: ECDSA.recover(challengeDigest(...), ...)
+      # _checkThreshold's digest parameter: its callers are held by wyec.sig.threshold-outside-eip712-domain.
+      - pattern-not-inside: |
+          function _checkThreshold(bytes32 digest, ...) internal view { ... }
+    message: >-
+      A signature is recovered over a digest that is not built by the bridge's EIP-712 domain helper
+      (_hashTypedDataV4, or mintDigest/challengeDigest, which wrap it). Without the domain (name,
+      version, chain id, verifying contract) a guardian signature replays across chains, deployments
+      and successor bridges. Raw ecrecover also skips OpenZeppelin's low-s and zero-address checks.
+    severity: ERROR
+    metadata:
+      category: security
+      bucket: critical
+      cwe: ["CWE-347: Improper Verification of Cryptographic Signature"]
+      references: ["https://eips.ethereum.org/EIPS/eip-712", "docs/wyec-contract-design.md §4"]
+
+  - id: wyec.sig.threshold-outside-eip712-domain
+    languages: [solidity]
+    paths:
+      include: ["/contracts/**"]
+    patterns:
+      - pattern: _checkThreshold($D, ...)
+      - pattern-not: _checkThreshold(_hashTypedDataV4(...), ...)
+      - pattern-not: _checkThreshold(mintDigest(...), ...)
+      - pattern-not: _checkThreshold(challengeDigest(...), ...)
+    message: >-
+      A guardian threshold is checked over a digest that is not built by the EIP-712 domain helper
+      (_hashTypedDataV4, mintDigest, challengeDigest). Every threshold act signs a typed struct under
+      the bridge's domain; anything else replays across chains and deployments.
+    severity: ERROR
+    metadata:
+      category: security
+      bucket: critical
+      cwe: ["CWE-347: Improper Verification of Cryptographic Signature"]
+      references: ["https://eips.ethereum.org/EIPS/eip-712", "docs/wyec-contract-design.md §4"]

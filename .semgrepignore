@@ -1,0 +1,11 @@
+# Paths Semgrep never scans (contrib/semgrep/README.md). Semgrep scans git-tracked files only; this file
+# replaces its built-in ignore list, so the usual build and vendor directories are named here too.
+# npm-installed dependencies (OpenZeppelin, forge-std, solc-js): upstream's code, pinned in package-lock.json.
+node_modules/
+# Foundry build output and caches.
+out/
+cache/
+broadcast/
+# The scanner's own rules, test inputs and ledgers.
+contrib/semgrep/
+*.min.js

@@ -19,6 +19,11 @@ contracts.
 | `test/` | Foundry tests |
 | `tools/solc`, `tools/solc-shim.js` | native-`solc` stand-in over solc-js, for restricted environments |
 
+## Security CI
+
+Slither, Aderyn, Semgrep (with bridge-specific rules), CodeQL, zizmor, gitleaks, OSV-Scanner and npm
+audit run on every PR and nightly: see `SECURITY-CI.md` for each check's gate and how to accept a finding.
+
 ## Build and test
 
 Foundry v1.7.1 and Node 22. Dependencies (OpenZeppelin 5.6.1, forge-std v1.17.0, solc-js 0.8.37)
