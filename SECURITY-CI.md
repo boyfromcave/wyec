@@ -1,7 +1,7 @@
 # Security CI
 
 wYEC's contracts will hold bridged value, so every push, every PR and every night runs the checks
-below. There are three workflows: `semgrep.yml`, `codeql.yml` and `secops.yml`. Every tool is
+below. There are four workflows: `semgrep.yml`, `codeql.yml`, `secops.yml` and `code-scanning.yml`. Every tool is
 installed at an exact version, checked against a sha256 recorded in the workflow or installed from a
 hash-locked requirements file. Every action is pinned to a commit SHA. No check opens an issue. Only
 Semgrep opens PRs: at most four rolling ones, one per severity bucket.
@@ -16,6 +16,7 @@ Semgrep opens PRs: at most four rolling ones, one per severity bucket.
 | **gitleaks** (secrets) | `secops.yml` `gitleaks` | PR: the PR's commits. Push, nightly, dispatch: full history | a leak | code scanning (`gitleaks`), with values redacted |
 | **OSV-Scanner** | `secops.yml` `osv-scanner` | PR, push, nightly | a known vulnerability in `package-lock.json` or one of the `contrib/*/requirements.txt` locks that `osv-scanner.toml` does not ignore | step summary, code scanning (`osv-scanner`) |
 | **npm audit** | `secops.yml` `npm-audit` | PR, push, nightly | a high or critical advisory in a production npm dependency | job log |
+| **Code-scanning triage** | `code-scanning.yml` (`contrib/secops/code-scanning-triage.py`) | push to `upgrade/vault` that changes the ledger or the workflow, nightly 03:53 UTC, dispatch (`dry_run` only prints) | never on an open alert | dismisses the alerts listed in `contrib/secops/code-scanning-dismissals.json`; run summary (alerts left open), artifact `code-scanning-alerts` |
 | **Dependabot** | `.github/dependabot.yml` | GitHub | (security updates only) | at most one grouped PR per ecosystem (npm, github-actions) |
 
 ## Slither
@@ -81,6 +82,7 @@ never the answer. Where each tool's acceptances go:
 | Semgrep | `contrib/semgrep/accepted.json` | the fingerprint, or `rule_paths` for a rule over paths (see its README) |
 | OSV-Scanner | `osv-scanner.toml` `[[IgnoredVulns]]` | advisory id, `reason`, `ignoreUntil` no more than 90 days out |
 | gitleaks | `.gitleaksignore` | the finding's fingerprint plus a comment. Only for test vectors and public constants: a real secret is rotated, never ignored |
+| Code scanning (CodeQL and every SARIF upload) | `contrib/secops/code-scanning-dismissals.json` | tool, rule, path glob, reason `false positive` / `won't fix` / `used in tests`, and a comment of at most 280 characters with the argument; `code-scanning.yml` dismisses the matching alerts on a push to `upgrade/vault` that changes the file and nightly, so the decision is in the history rather than only in the web UI. Check a new entry with the workflow's `dry_run` dispatch |
 | zizmor | inline `# zizmor: ignore[<audit>]` with a reason | fix it instead wherever possible |
 
 Contract changes keep their own review: never "fix" a contract only to quiet a scanner. Hawkeye
